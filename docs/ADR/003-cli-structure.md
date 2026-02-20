@@ -69,9 +69,10 @@ Adopt and document the existing top-level command structure.
     - `-j, --json`
     - `--no-cache`
 - `gyazo stats`
-  - Default behavior: weekly (`7` days) Markdown summary.
+  - Default range: from 8 days ago to yesterday
+  - Default behavior: weekly Markdown summary.
   - Options:
-    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>` (window end date anchor)
+    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>` (window end date anchor; default: yesterday)
     - `--days <number>` (default: `7`)
     - `--top <number>` (default: `10`)
     - `--max-pages <number>` (default: `10`)

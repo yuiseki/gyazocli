@@ -562,6 +562,16 @@ function buildStatsDateRange(dateOption: string | undefined, daysOption: string)
   startLabel: string;
   endLabel: string;
 } {
+  if (!dateOption && daysOption === '7') {
+    const weekly = buildRecentWeekRangeUntilYesterday();
+    return {
+      range: weekly,
+      days: 7,
+      startLabel: formatDateYmd(weekly.start),
+      endLabel: formatDateYmd(weekly.end),
+    };
+  }
+
   const days = parsePositiveIntegerOption(daysOption, '--days');
   let endDate: Date;
 
@@ -573,7 +583,7 @@ function buildStatsDateRange(dateOption: string | undefined, daysOption: string)
     endDate = new Date(
       now.getFullYear(),
       now.getMonth(),
-      now.getDate(),
+      now.getDate() - 1,
       23,
       59,
       59,
@@ -1876,7 +1886,7 @@ program
 program
   .command('stats')
   .description('Show weekly stats summary in Markdown')
-  .option('--date <yyyy|yyyy-mm|yyyy-mm-dd>', 'window end date anchor (default: today)')
+  .option('--date <yyyy|yyyy-mm|yyyy-mm-dd>', 'window end date anchor (default: yesterday)')
   .option('--days <number>', 'window length in days', '7')
   .option('--top <number>', 'rows per section', '10')
   .option('--max-pages <number>', 'max pages to fetch when warming cache', '10')

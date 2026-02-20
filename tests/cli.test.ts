@@ -231,6 +231,47 @@ test('stats outputs markdown sections for weekly summary', () => {
   expect(result.stdout).toMatch(/\| #tag1 \| 1 \|/);
 });
 
+test('stats default window is from 8 days ago to yesterday', () => {
+  const cacheDir = createTempCacheDir();
+  const range = getDefaultWeeklyRangeLabels();
+  const yesterday = ymdPartsFromDate(range.end);
+  const today = ymdPartsFromDate(new Date());
+
+  writeHourlyIndex(cacheDir, yesterday.year, yesterday.month, yesterday.day, '10', [
+    'wk000000000000000000000000000001',
+  ]);
+  writeHourlyMeta(cacheDir, 'apps', yesterday.year, yesterday.month, yesterday.day, '10', {
+    wk000000000000000000000000000001: ['WeeklyApp'],
+  });
+  writeHourlyMeta(cacheDir, 'domains', yesterday.year, yesterday.month, yesterday.day, '10', {
+    wk000000000000000000000000000001: ['weekly.example'],
+  });
+  writeHourlyMeta(cacheDir, 'tags', yesterday.year, yesterday.month, yesterday.day, '10', {
+    wk000000000000000000000000000001: ['weekly'],
+  });
+
+  writeHourlyIndex(cacheDir, today.year, today.month, today.day, '10', [
+    'td000000000000000000000000000001',
+  ]);
+  writeHourlyMeta(cacheDir, 'apps', today.year, today.month, today.day, '10', {
+    td000000000000000000000000000001: ['TodayApp'],
+  });
+  writeHourlyMeta(cacheDir, 'domains', today.year, today.month, today.day, '10', {
+    td000000000000000000000000000001: ['today.example'],
+  });
+  writeHourlyMeta(cacheDir, 'tags', today.year, today.month, today.day, '10', {
+    td000000000000000000000000000001: ['todaytag'],
+  });
+
+  const result = runCli(cacheDir, ['stats', '--top', '5']);
+  expect(result.status).toBe(0);
+  expect(result.stdout).toMatch(
+    new RegExp(`Window: ${range.startLabel} to ${range.endLabel} \\(7 days\\)`),
+  );
+  expect(result.stdout).toMatch(/\| WeeklyApp \| 1 \|/);
+  expect(result.stdout).not.toContain('TodayApp');
+});
+
 test('apps rejects invalid --date month', () => {
   const cacheDir = createTempCacheDir();
   const result = runCli(cacheDir, ['apps', '--date', '2026-13']);
