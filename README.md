@@ -20,7 +20,7 @@ gyazo --help
 
 - `gyazo config set token <token>`: Save your access token
 - `gyazo config get token|me`: Show saved token (masked) or `me` profile info
-- `gyazo ls` (`gyazo list`): List images (`--photos`, `--uploaded`, `-H` available)
+- `gyazo ls` (`gyazo list`): List images (`--date`/`--today`, `--photos`, `--uploaded`, `-H` available; `--photos/--uploaded` can be combined with `--date`/`--today`)
 - `gyazo search <query>`: Search images
 - `gyazo get <image_id>`: Show image details (`--ocr`, `--objects`, `-j` available)
 - `gyazo apps|domains|tags|locations`: Show rankings

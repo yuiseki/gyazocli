@@ -529,6 +529,56 @@ test('list --hour formats summary with domain, location and short id', () => {
   expect(result.stdout).not.toContain('https://t.co/');
 });
 
+test('list --date reads date-range cache and supports pagination', () => {
+  const cacheDir = createTempCacheDir();
+  const id1 = 'dt000000000000000000000000000001';
+  const id2 = 'dt000000000000000000000000000002';
+  const id3 = 'dt000000000000000000000000000003';
+
+  writeHourlyIndex(cacheDir, '2026', '02', '20', '02', [id1]);
+  writeImageCache(cacheDir, id1, {
+    image_id: id1,
+    permalink_url: `https://gyazo.com/${id1}`,
+    created_at: '2026-02-20T02:34:56+09:00',
+    metadata: { title: 'day-target-early' },
+  });
+
+  writeHourlyIndex(cacheDir, '2026', '02', '20', '11', [id2]);
+  writeImageCache(cacheDir, id2, {
+    image_id: id2,
+    permalink_url: `https://gyazo.com/${id2}`,
+    created_at: '2026-02-20T11:34:56+09:00',
+    metadata: { title: 'day-target-late' },
+  });
+
+  writeHourlyIndex(cacheDir, '2026', '02', '21', '01', [id3]);
+  writeImageCache(cacheDir, id3, {
+    image_id: id3,
+    permalink_url: `https://gyazo.com/${id3}`,
+    created_at: '2026-02-21T01:00:00+09:00',
+    metadata: { title: 'outside-day' },
+  });
+
+  const page1 = runCli(cacheDir, ['ls', '--date', '2026-02-20', '--json', '--limit', '1', '--page', '1']);
+  expect(page1.status).toBe(0);
+  const json1 = JSON.parse(page1.stdout);
+  expect(json1).toHaveLength(1);
+  expect(json1[0].image_id).toBe(id2);
+
+  const page2 = runCli(cacheDir, ['ls', '--date', '2026-02-20', '--json', '--limit', '1', '--page', '2']);
+  expect(page2.status).toBe(0);
+  const json2 = JSON.parse(page2.stdout);
+  expect(json2).toHaveLength(1);
+  expect(json2[0].image_id).toBe(id1);
+});
+
+test('list rejects --hour with --date', () => {
+  const cacheDir = createTempCacheDir();
+  const result = runCli(cacheDir, ['ls', '--hour', '2026-02-20-02', '--date', '2026-02-20']);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toMatch(/--hour and --date cannot be used together/);
+});
+
 test('list rejects incompatible alias options', () => {
   const cacheDir = createTempCacheDir();
   const result = runCli(cacheDir, ['ls', '--photos', '--uploaded']);

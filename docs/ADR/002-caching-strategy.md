@@ -47,6 +47,9 @@ Store cache files under XDG-style user cache location by default, with an enviro
 - `gyazo get <image_id>`:
   - Uses cached detail by default.
   - `--no-cache` forces API fetch and rewrites cache.
+- `gyazo list --date <...>`:
+  - Reads image IDs from hourly index cache files in the target day/month/year range.
+  - If the range has no hourly cache entries, it warms cache from API list pages and then reads from cache.
 - `gyazo sync`:
   - Fetches list pages (`per_page=100`) for a bounded date range.
   - Skips detail fetch when cached record already has `ocr`.

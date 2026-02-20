@@ -666,6 +666,21 @@ function getDatePartsInRange(start: Date, end: Date): Array<{ year: string; mont
   return dates;
 }
 
+function loadImageIdsFromDateRangeCache(targetDate: ParsedDateOption): string[] {
+  const imageIds = new Set<string>();
+  const dates = getDatePartsInRange(targetDate.start, targetDate.end);
+  const hours = getDateHourStrings();
+
+  for (const date of dates) {
+    for (const hour of hours) {
+      const ids = loadHourlyCache(date.year, date.month, date.day, hour) || [];
+      for (const id of ids) imageIds.add(id);
+    }
+  }
+
+  return Array.from(imageIds);
+}
+
 function normalizeRankingValues(values: string[]): string[] {
   const uniqueByLower = new Map<string, string>();
   for (const raw of values) {
@@ -805,6 +820,73 @@ async function warmDateCacheForLocations(
     'locations',
     extractImageLocations,
   );
+}
+
+async function warmDateCacheForList(
+  targetDate: ParsedDateOption,
+  maxPages: number,
+  useCache: boolean,
+): Promise<string[]> {
+  const hourlyIndices: Map<string, Set<string>> = new Map();
+  const imageIds: Set<string> = new Set();
+
+  for (let page = 1; page <= maxPages; page++) {
+    const images = await listImages(page, 100);
+    if (images.length === 0) break;
+
+    let reachedLimit = false;
+    for (const img of images) {
+      const createdAt = new Date(img.created_at);
+      if (Number.isNaN(createdAt.getTime())) continue;
+
+      if (createdAt > targetDate.end) continue;
+      if (createdAt < targetDate.start) {
+        reachedLimit = true;
+        break;
+      }
+
+      const dateParts = toDateParts(createdAt);
+      const bucketKey = buildHourlyBucketKey(
+        dateParts.year,
+        dateParts.month,
+        dateParts.day,
+        dateParts.hour,
+      );
+      if (!hourlyIndices.has(bucketKey)) {
+        hourlyIndices.set(bucketKey, new Set());
+      }
+
+      hourlyIndices.get(bucketKey)?.add(img.image_id);
+      imageIds.add(img.image_id);
+
+      let merged = img;
+      const cached = useCache ? loadImageCache(img.image_id) : null;
+      if (cached) {
+        merged = mergeImageForDisplay(img, cached);
+      }
+      saveImageCache(img.image_id, merged);
+    }
+
+    if (reachedLimit) break;
+  }
+
+  for (const [bucketKey, current] of hourlyIndices.entries()) {
+    const { year, month, day, hour } = splitHourlyBucketKey(bucketKey);
+    if (useCache) {
+      const existing = loadHourlyCache(year, month, day, hour) || [];
+      for (const id of existing) current.add(id);
+    }
+    saveHourlyCache(year, month, day, hour, Array.from(current));
+    for (const id of current) imageIds.add(id);
+  }
+
+  if (useCache) {
+    for (const id of loadImageIdsFromDateRangeCache(targetDate)) {
+      imageIds.add(id);
+    }
+  }
+
+  return Array.from(imageIds);
 }
 
 async function warmDateCacheForRanking(
@@ -1540,6 +1622,9 @@ program
   .option('-l, --limit <number>', 'items per page', '20')
   .option('-j, --json', 'output as JSON')
   .option('-H, --hour <yyyy-mm-dd-hh>', 'target hour')
+  .option('--date <yyyy|yyyy-mm|yyyy-mm-dd>', 'target date/range')
+  .option('--today', 'target today only')
+  .option('--max-pages <number>', 'max pages to scan for --date/--today mode', '100')
   .option('--photos', 'alias of search "has:location"')
   .option('--uploaded', 'alias of search "gyazocli_uploads"')
   .option('--no-cache', 'force fetch from API')
@@ -1547,13 +1632,28 @@ program
     await ensureAccessToken();
     try {
       const useCache = options.cache !== false;
+      const page = parsePositiveIntegerOption(options.page, '--page');
+      const limit = parsePositiveIntegerOption(options.limit, '--limit');
+      const maxPages = parsePositiveIntegerOption(options.maxPages, '--max-pages');
+      const hasDateRange = Boolean(options.date || options.today);
+      const targetDate = hasDateRange
+        ? (options.today ? parseDateOption() : parseDateOption(options.date))
+        : undefined;
 
       if (options.photos && options.uploaded) {
         console.error('Error: --photos and --uploaded cannot be used together.');
         process.exit(1);
       }
+      if (options.today && options.date) {
+        console.error('Error: --today and --date cannot be used together.');
+        process.exit(1);
+      }
       if ((options.photos || options.uploaded) && options.hour) {
         console.error('Error: --photos/--uploaded and --hour cannot be used together.');
+        process.exit(1);
+      }
+      if (options.hour && hasDateRange) {
+        console.error('Error: --hour and --date/--today cannot be used together.');
         process.exit(1);
       }
 
@@ -1563,16 +1663,94 @@ program
           ? 'gyazocli_uploads'
           : undefined;
       if (aliasQuery) {
-        const images = await searchImages(
-          aliasQuery,
-          parseInt(options.page, 10),
-          parseInt(options.limit, 10),
-        );
+        let images: any[] = [];
+        if (targetDate) {
+          const collected: any[] = [];
+          for (let searchPage = 1; searchPage <= maxPages; searchPage++) {
+            const pageImages = await searchImages(aliasQuery, searchPage, 100);
+            if (pageImages.length === 0) break;
+
+            let reachedLimit = false;
+            for (const img of pageImages) {
+              const createdAt = new Date(img.created_at);
+              if (Number.isNaN(createdAt.getTime())) continue;
+              if (createdAt > targetDate.end) continue;
+              if (createdAt < targetDate.start) {
+                reachedLimit = true;
+                break;
+              }
+              collected.push(img);
+            }
+            if (reachedLimit) break;
+          }
+
+          collected.sort((a, b) => {
+            const ta = new Date(a.created_at).getTime();
+            const tb = new Date(b.created_at).getTime();
+            return tb - ta;
+          });
+
+          const startIndex = (page - 1) * limit;
+          images = collected.slice(startIndex, startIndex + limit);
+        } else {
+          images = await searchImages(
+            aliasQuery,
+            page,
+            limit,
+          );
+        }
+
         if (options.json) {
           console.log(JSON.stringify(images, null, 2));
         } else {
           const imagesForDisplay = await prepareImagesForDisplay(images, {
             cacheSearchResults: true,
+            enrichLocation: true,
+            useCache,
+          });
+          printListImages(imagesForDisplay);
+        }
+        return;
+      }
+
+      if (targetDate) {
+        let imageIds: string[] = [];
+        if (useCache) {
+          imageIds = loadImageIdsFromDateRangeCache(targetDate);
+          if (imageIds.length === 0) {
+            await warmDateCacheForList(targetDate, maxPages, true);
+            imageIds = loadImageIdsFromDateRangeCache(targetDate);
+          }
+        } else {
+          imageIds = await warmDateCacheForList(targetDate, maxPages, false);
+        }
+
+        if (imageIds.length === 0) {
+          console.log(`No images found for ${targetDate.dateKey}.`);
+          return;
+        }
+
+        let images = imageIds
+          .map(id => loadImageCache(id))
+          .filter((img): img is any => img !== null);
+        images = images.filter((img) => {
+          const createdAt = new Date(img.created_at);
+          if (Number.isNaN(createdAt.getTime())) return false;
+          return createdAt >= targetDate.start && createdAt <= targetDate.end;
+        });
+
+        images.sort((a, b) => {
+          const ta = new Date(a.created_at).getTime();
+          const tb = new Date(b.created_at).getTime();
+          return tb - ta;
+        });
+
+        const startIndex = (page - 1) * limit;
+        const pageImages = images.slice(startIndex, startIndex + limit);
+        if (options.json) {
+          console.log(JSON.stringify(pageImages, null, 2));
+        } else {
+          const imagesForDisplay = await prepareImagesForDisplay(pageImages, {
             enrichLocation: true,
             useCache,
           });
@@ -1620,7 +1798,7 @@ program
         return;
       }
 
-      const images = await listImages(parseInt(options.page, 10), parseInt(options.limit, 10));
+      const images = await listImages(page, limit);
       if (options.json) {
         console.log(JSON.stringify(images, null, 2));
       } else {

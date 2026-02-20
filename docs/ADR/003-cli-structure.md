@@ -28,8 +28,11 @@ Adopt and document the existing top-level command structure.
     - `-l, --limit <number>` (default: `20`)
     - `-j, --json`
     - `-H, --hour <yyyy-mm-dd-hh>` (reads hourly cache only)
-    - `--photos` (alias of `search has:location`)
-    - `--uploaded` (alias of `search gyazocli_uploads`)
+    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>` (reads date range from hourly cache; warms from API if needed)
+    - `--today` (target today only)
+    - `--max-pages <number>` (default: `100`, used for `--date`/`--today` warming)
+    - `--photos` (alias of `search has:location`, can be combined with `--date`/`--today`)
+    - `--uploaded` (alias of `search gyazocli_uploads`, can be combined with `--date`/`--today`)
     - `--no-cache`
 - `gyazo get <image_id>`
   - Options:
