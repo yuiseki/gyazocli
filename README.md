@@ -11,6 +11,8 @@ npm i -g @yuiseki/gyazocli
 ## Usage
 
 ```bash
+gyazo config set token your_personal_gyazo_access_token_here
+gyazo sync --days 10
 gyazo --help
 ```
 
