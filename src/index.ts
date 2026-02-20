@@ -24,7 +24,7 @@ const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 program
   .name('gyazo')
   .description('Gyazo Memory CLI for AI Secretary')
-  .version('1.0.0');
+  .version('0.0.1');
 
 // Config Command
 const configCmd = program.command('config').description('Manage configuration');
