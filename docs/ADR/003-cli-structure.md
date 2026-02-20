@@ -11,7 +11,7 @@ Adopt and document the existing top-level command structure.
 
 ### 1. Program Metadata
 - Binary name: `gyazo`
-- Version: `1.0.0`
+- Version: `0.0.1`
 - Description: `Gyazo Memory CLI for AI Secretary`
 
 ### 2. Commands
@@ -80,6 +80,18 @@ Adopt and document the existing top-level command structure.
     - `--max-pages <number>` (default: `10`)
     - `-j, --json`
     - `--no-cache`
+- `gyazo summary`
+  - Default range: from 8 days ago to yesterday
+  - Shows day-by-day Markdown sections (`### YYYY-MM-DD`) with:
+    - `image count`
+    - rankings of apps/domains/tags/locations
+  - Options:
+    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>`
+    - `--today` (target today only)
+    - `-l, --limit <number>` (default: `10`, max: `10`)
+    - `--max-pages <number>` (default: `10`)
+    - `-j, --json`
+    - `--no-cache`
 - `gyazo stats`
   - Default range: from 8 days ago to yesterday
   - Default behavior: weekly Markdown summary.
@@ -106,7 +118,8 @@ Adopt and document the existing top-level command structure.
   - Supported types: `json`, `hourly`
 
 ### 3. Output and Behavior Notes
-- `-j, --json` is available on `config get`, `list`, `get`, `search`, `apps`, `domains`, `tags`, and `locations`.
+- `-j, --json` is available on `config get`, `list`, `get`, `search`, `apps`, `domains`, `tags`, `locations`, and `summary`.
+- `summary` default output is Markdown with headings (`## Gyazo Summary`, `### YYYY-MM-DD`) and nested bullet lists.
 - There are no global `--plain` or `--verbose` flags in current implementation.
 - Authenticated commands call token resolution before API access.
 

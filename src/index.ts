@@ -420,6 +420,20 @@ type UploadTimeSummary = {
   byWeekday: Array<{ weekday: number; count: number }>;
 };
 
+type DailyUploadCount = {
+  date: string;
+  count: number;
+};
+
+type DailySummary = {
+  date: string;
+  imageCount: number;
+  apps: AppRank[];
+  domains: DomainRank[];
+  tags: TagRank[];
+  locations: LocationRank[];
+};
+
 type RankingFromHourlySummary = {
   ranking: Array<{ key: string; count: number }>;
   totalImages: number;
@@ -1323,6 +1337,137 @@ function buildUploadTimeSummaryFromImageCache(
   };
 }
 
+function buildDailyUploadCountsFromHourlyCache(targetDate: ParsedDateOption): DailyUploadCount[] {
+  const dates = getDatePartsInRange(targetDate.start, targetDate.end);
+  const hours = getDateHourStrings();
+  const byDate = new Map<string, Set<string>>();
+
+  for (const date of dates) {
+    const dateLabel = `${date.year}-${date.month}-${date.day}`;
+    if (!byDate.has(dateLabel)) {
+      byDate.set(dateLabel, new Set());
+    }
+
+    const ids = byDate.get(dateLabel)!;
+    for (const hour of hours) {
+      const imageIds = loadHourlyCache(date.year, date.month, date.day, hour) || [];
+      for (const imageId of imageIds) ids.add(imageId);
+    }
+  }
+
+  return dates.map(date => {
+    const dateLabel = `${date.year}-${date.month}-${date.day}`;
+    return {
+      date: dateLabel,
+      count: byDate.get(dateLabel)?.size || 0,
+    };
+  });
+}
+
+function buildDailyUploadCountsFromImageCache(
+  imageIds: string[],
+  targetDate: ParsedDateOption,
+): DailyUploadCount[] {
+  const dates = getDatePartsInRange(targetDate.start, targetDate.end);
+  const byDate = new Map<string, Set<string>>();
+
+  for (const date of dates) {
+    const dateLabel = `${date.year}-${date.month}-${date.day}`;
+    byDate.set(dateLabel, new Set());
+  }
+
+  for (const imageId of imageIds) {
+    const image = loadImageCache(imageId);
+    const createdAtText = normalizeText(image?.created_at);
+    if (!createdAtText) continue;
+
+    const createdAt = new Date(createdAtText);
+    if (Number.isNaN(createdAt.getTime())) continue;
+    if (createdAt < targetDate.start || createdAt > targetDate.end) continue;
+
+    const dateLabel = formatDateYmd(createdAt);
+    const ids = byDate.get(dateLabel);
+    if (!ids) continue;
+    ids.add(imageId);
+  }
+
+  return dates.map(date => {
+    const dateLabel = `${date.year}-${date.month}-${date.day}`;
+    return {
+      date: dateLabel,
+      count: byDate.get(dateLabel)?.size || 0,
+    };
+  });
+}
+
+function buildDailySummariesFromImageCache(targetDate: ParsedDateOption): DailySummary[] {
+  const dates = getDatePartsInRange(targetDate.start, targetDate.end);
+  const hours = getDateHourStrings();
+  const summaries: DailySummary[] = [];
+
+  for (const date of dates) {
+    const dateLabel = `${date.year}-${date.month}-${date.day}`;
+    const imageIds = new Set<string>();
+
+    for (const hour of hours) {
+      const ids = loadHourlyCache(date.year, date.month, date.day, hour) || [];
+      for (const id of ids) imageIds.add(id);
+    }
+
+    const appCounts = new Map<string, number>();
+    const domainCounts = new Map<string, number>();
+    const tagCounts = new Map<string, number>();
+    const locationCounts = new Map<string, number>();
+
+    for (const imageId of imageIds) {
+      const image = loadImageCache(imageId);
+      if (!image) continue;
+
+      for (const app of extractImageApps(image)) {
+        appCounts.set(app, (appCounts.get(app) || 0) + 1);
+      }
+      for (const domain of extractImageDomains(image)) {
+        domainCounts.set(domain, (domainCounts.get(domain) || 0) + 1);
+      }
+      for (const tag of extractImageTags(image)) {
+        tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+      }
+      for (const location of extractImageLocations(image)) {
+        locationCounts.set(location, (locationCounts.get(location) || 0) + 1);
+      }
+    }
+
+    const sortEntries = (a: [string, number], b: [string, number]) => {
+      if (b[1] !== a[1]) return b[1] - a[1];
+      return a[0].localeCompare(b[0]);
+    };
+
+    const apps = Array.from(appCounts.entries())
+      .sort(sortEntries)
+      .map(([app, count]) => ({ app, count }));
+    const domains = Array.from(domainCounts.entries())
+      .sort(sortEntries)
+      .map(([domain, count]) => ({ domain, count }));
+    const tags = Array.from(tagCounts.entries())
+      .sort(sortEntries)
+      .map(([tag, count]) => ({ tag, count }));
+    const locations = Array.from(locationCounts.entries())
+      .sort(sortEntries)
+      .map(([location, count]) => ({ location, count }));
+
+    summaries.push({
+      date: dateLabel,
+      imageCount: imageIds.size,
+      apps,
+      domains,
+      tags,
+      locations,
+    });
+  }
+
+  return summaries;
+}
+
 function appendStatsRankSection(
   lines: string[],
   title: string,
@@ -1401,6 +1546,67 @@ function renderStatsMarkdown(params: {
     params.tags.map(item => ({ label: `#${item.tag}`, count: item.count })),
     params.top,
   );
+
+  return lines.join('\n').trimEnd();
+}
+
+function renderSummaryText(params: {
+  dateKey: string;
+  dailySummaries: DailySummary[];
+  limit: number;
+}): string {
+  const appendRankSection = (
+    lines: string[],
+    title: string,
+    rows: Array<{ label: string; count: number }>,
+    limit: number,
+  ) => {
+    lines.push(`- ${title}:`);
+    const items = rows.filter(row => row.count > 0).slice(0, limit);
+    if (items.length === 0) {
+      lines.push('  - (none)');
+      return;
+    }
+    for (const row of items) {
+      lines.push(`  - ${row.label}${row.count > 1 ? ` (${row.count})` : ''}`);
+    }
+  };
+
+  const lines: string[] = [];
+  lines.push('## Gyazo Summary');
+  lines.push('');
+  lines.push(`- Window: ${params.dateKey}`);
+  lines.push('');
+
+  for (const day of params.dailySummaries) {
+    lines.push(`### ${day.date}`);
+    lines.push(`- Image count: ${day.imageCount}`);
+    appendRankSection(
+      lines,
+      'Apps',
+      day.apps.map(item => ({ label: item.app, count: item.count })),
+      params.limit,
+    );
+    appendRankSection(
+      lines,
+      'Domains',
+      day.domains.map(item => ({ label: item.domain, count: item.count })),
+      params.limit,
+    );
+    appendRankSection(
+      lines,
+      'Tags',
+      day.tags.map(item => ({ label: `#${item.tag}`, count: item.count })),
+      params.limit,
+    );
+    appendRankSection(
+      lines,
+      'Locations',
+      day.locations.map(item => ({ label: item.location, count: item.count })),
+      params.limit,
+    );
+    lines.push('');
+  }
 
   return lines.join('\n').trimEnd();
 }
@@ -2169,6 +2375,75 @@ program
       console.log(`Total images with location metadata: ${totalWithLocation}`);
     } catch (error: any) {
       console.error('Error ranking locations:', error.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('summary')
+  .description('Show weekly summary with daily uploads and metadata rankings')
+  .option('--date <yyyy|yyyy-mm|yyyy-mm-dd>', 'target date/range')
+  .option('--today', 'target today only (overrides default weekly range)')
+  .option('-l, --limit <number>', 'maximum ranking rows (max: 10)', '10')
+  .option('--max-pages <number>', 'max pages to scan before stopping', '10')
+  .option('-j, --json', 'output as JSON')
+  .option('--no-cache', 'force fetch from API')
+  .action(async (options) => {
+    await ensureAccessToken();
+    try {
+      const targetDate = resolveRankingRangeOption(options);
+      const requestedLimit = parsePositiveIntegerOption(options.limit, '--limit');
+      const limit = Math.min(requestedLimit, 10);
+      const maxPages = parsePositiveIntegerOption(options.maxPages, '--max-pages');
+      const useCache = options.cache !== false;
+
+      let dailySummaries: DailySummary[] = [];
+
+      if (useCache) {
+        dailySummaries = buildDailySummariesFromImageCache(targetDate);
+        const totalUploads = dailySummaries.reduce((sum, day) => sum + day.imageCount, 0);
+        if (totalUploads === 0) {
+          await warmDateCacheForTags(targetDate, maxPages, true);
+          await warmDateCacheForLocations(targetDate, maxPages, true);
+          dailySummaries = buildDailySummariesFromImageCache(targetDate);
+        } else {
+          const hasMetadata = dailySummaries.some(day =>
+            day.apps.length > 0 || day.domains.length > 0 || day.tags.length > 0 || day.locations.length > 0,
+          );
+          if (!hasMetadata) {
+            await warmDateCacheForTags(targetDate, maxPages, true);
+            await warmDateCacheForLocations(targetDate, maxPages, true);
+            dailySummaries = buildDailySummariesFromImageCache(targetDate);
+          }
+        }
+      } else {
+        await warmDateCacheForTags(targetDate, maxPages, false);
+        await warmDateCacheForLocations(targetDate, maxPages, false);
+        dailySummaries = buildDailySummariesFromImageCache(targetDate);
+      }
+
+      if (options.json) {
+        console.log(JSON.stringify({
+          date: targetDate.dateKey,
+          days: dailySummaries.map(day => ({
+            date: day.date,
+            image_count: day.imageCount,
+            apps: day.apps.slice(0, limit),
+            domains: day.domains.slice(0, limit),
+            tags: day.tags.slice(0, limit),
+            locations: day.locations.slice(0, limit),
+          })),
+        }, null, 2));
+        return;
+      }
+
+      console.log(renderSummaryText({
+        dateKey: targetDate.dateKey,
+        dailySummaries,
+        limit,
+      }));
+    } catch (error: any) {
+      console.error('Error building summary:', error.message);
       process.exit(1);
     }
   });

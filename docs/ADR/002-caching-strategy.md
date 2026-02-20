@@ -72,6 +72,11 @@ Store cache files under XDG-style user cache location by default, with an enviro
   - Aggregates upload time bands and rankings of apps/domains/tags from hourly caches.
   - Uses the same hourly metadata extract cache mechanism as ranking commands.
   - If cache data for the target window is absent, warming is triggered once, then summary is built from cache.
+- `gyazo summary`:
+  - Default window is from 8 days ago to yesterday (`7` days).
+  - Outputs day-by-day Markdown sections with `image count` plus rankings of apps/domains/tags/locations.
+  - Uses hourly index cache to discover images per day, then builds rankings from image cache records.
+  - If image-cache metadata is insufficient, warming via list/detail fetch is triggered through ranking warmers.
 
 ## Consequences
 - Cache is portable and independent from the repository working tree.

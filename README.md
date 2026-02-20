@@ -24,6 +24,7 @@ gyazo --help
 - `gyazo search <query>`: Search images
 - `gyazo get <image_id>`: Show image details (`--ocr`, `--objects`, `-j` available)
 - `gyazo apps|domains|tags|locations`: Show rankings
+- `gyazo summary`: Show day-by-day weekly summary in Markdown (`##`/`###` headings, image count, apps, domains, tags, locations per day)
 - `gyazo stats`: Show weekly summary
 - `gyazo upload [path]`: Upload an image (uses stdin when path is omitted)
 - `gyazo sync`: Sync cache
@@ -33,7 +34,7 @@ Date range notes:
 - Use `--today` for today only, or `--date <yyyy|yyyy-mm|yyyy-mm-dd>` for a custom range
 
 JSON output:
-- `-j, --json` is available for `config get`, `ls`, `get`, `search`, `apps`, `domains`, `tags`, and `locations`
+- `-j, --json` is available for `config get`, `ls`, `get`, `search`, `apps`, `domains`, `tags`, `locations`, and `summary`
 
 ## Development
 
