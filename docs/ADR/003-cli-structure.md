@@ -18,29 +18,67 @@ Adopt and document the existing top-level command structure.
 - `gyazo config set <key> <value>`
   - Currently supported key: `token`
 - `gyazo config get <key>`
-  - Currently supported key: `token` (masked output)
+  - `token` is masked
+  - `me` fetches `/api/users/me`
+  - Options:
+    - `-j, --json`
 - `gyazo list` (alias: `gyazo ls`)
   - Options:
     - `-p, --page <number>` (default: `1`)
     - `-l, --limit <number>` (default: `20`)
     - `-j, --json`
     - `-H, --hour <yyyy-mm-dd-hh>` (reads hourly cache only)
+    - `--photos` (alias of `search has:location`)
+    - `--uploaded` (alias of `search gyazocli_uploads`)
+    - `--no-cache`
 - `gyazo get <image_id>`
   - Options:
     - `-j, --json`
+    - `--ocr`
+    - `--objects`
     - `--no-cache`
-- `gyazo search <query>`
+- `gyazo search [query]`
   - Options:
     - `-j, --json`
+    - `--no-cache`
+- `gyazo apps`
+  - Options:
+    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>` (default: today)
+    - `-l, --limit <number>` (default: `10`, max: `10`)
+    - `--max-pages <number>` (default: `10`)
+    - `-j, --json`
+    - `--no-cache`
+- `gyazo domains`
+  - Options:
+    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>` (default: today)
+    - `-l, --limit <number>` (default: `10`, max: `10`)
+    - `--max-pages <number>` (default: `10`)
+    - `-j, --json`
+    - `--no-cache`
+- `gyazo tags`
+  - Options:
+    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>` (default: today)
+    - `-l, --limit <number>` (default: `10`, max: `10`)
+    - `--max-pages <number>` (default: `10`)
+    - `-j, --json`
+    - `--no-cache`
+- `gyazo upload [path]`
+  - Options:
+    - `--title <title>`
+    - `--app <app>` (default: `gyazocli`)
+    - `--url <url>`
+    - `--timestamp <unix_timestamp>`
+    - `--desc <desc>` (`#gyazocli_uploads` is always appended)
 - `gyazo sync`
   - Options:
-    - `--days <number>` (default: `1`)
+    - `--days <number>` (default: `1`, used when `--date` is omitted)
+    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>`
     - `--max-pages <number>` (default: `10`)
 - `gyazo import <type> <dir>`
   - Supported types: `json`, `hourly`
 
 ### 3. Output and Behavior Notes
-- `-j, --json` is available only on `list`, `get`, and `search`.
+- `-j, --json` is available on `config get`, `list`, `get`, `search`, `apps`, `domains`, and `tags`.
 - There are no global `--plain` or `--verbose` flags in current implementation.
 - Authenticated commands call token resolution before API access.
 

@@ -25,7 +25,23 @@ Store cache files under XDG-style user cache location by default, with an enviro
 - File content: JSON array of image IDs for that hour.
 - Used by `gyazo list --hour <yyyy-mm-dd-hh>`.
 
-### 4. Cache Update Behavior in Commands
+### 4. Hourly Metadata Extract Cache Layout
+- Path patterns:
+  - `<cacheRoot>/hourly/<YYYY>/<MM>/<DD>/<HH>-apps.json`
+  - `<cacheRoot>/hourly/<YYYY>/<MM>/<DD>/<HH>-domains.json`
+  - `<cacheRoot>/hourly/<YYYY>/<MM>/<DD>/<HH>-tags.json`
+- File content:
+  - JSON object keyed by `image_id`.
+  - Value is string array of extracted metadata tokens for that command.
+  - Example:
+    - `apps`: `{ "<imageId>": ["Chrome"] }`
+    - `domains`: `{ "<imageId>": ["x.com"] }`
+    - `tags`: `{ "<imageId>": ["ゆいせきのコーデ", "ゆいせきの自撮り"] }`
+- Purpose:
+  - Avoid repeated full image-cache scans when computing rankings.
+  - Preserve negative results (`[]`) per image so commands do not re-fetch detail repeatedly.
+
+### 5. Cache Update Behavior in Commands
 - `gyazo get <image_id>`:
   - Uses cached detail by default.
   - `--no-cache` forces API fetch and rewrites cache.
@@ -33,8 +49,18 @@ Store cache files under XDG-style user cache location by default, with an enviro
   - Fetches list pages (`per_page=100`) for a bounded date range.
   - Skips detail fetch when cached record already has `ocr`.
   - Writes/merges hourly index files.
+- `gyazo apps`, `gyazo domains`, `gyazo tags`:
+  - With default cache mode:
+    - Read ranking from hourly metadata extract caches for fast aggregation.
+    - If `<HH>-*.json` is missing but `<HH>.json` exists, build it once from image cache and persist.
+    - If the target range has no hourly cache data, run API-based warming once, then read from cache.
+  - With `--no-cache`:
+    - Force API-based warming by scanning list pages (`per_page=100`) in the target date range.
+    - Update both hourly image index (`<HH>.json`) and hourly metadata extract caches (`<HH>-*.json`).
+    - Ranking is computed from warmed image cache data for that run (no historical cache merge).
 
 ## Consequences
 - Cache is portable and independent from the repository working tree.
 - Large historical datasets remain manageable on filesystem.
-- Cache freshness depends on command behavior (`get --no-cache` and `sync`).
+- Ranking commands become significantly faster on repeated runs due to hourly extracted metadata cache.
+- Cache freshness depends on command behavior (`get --no-cache`, `sync`, and ranking command warming).

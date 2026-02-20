@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 import { z } from 'zod';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const configSchema = z.object({
   GYAZO_ACCESS_TOKEN: z.string().optional(),

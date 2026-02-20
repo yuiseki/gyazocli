@@ -55,6 +55,7 @@ Fetch detailed information for a specific image, including OCR and localized obj
   - `title`: Window title at the time of capture.
   - `url`: Source URL of the capture.
   - `app`: Application name.
+  - `links`: Extracted link keywords (used as tags in this CLI).
   - `exif_address`: Geolocation address from EXIF.
 
 ---
