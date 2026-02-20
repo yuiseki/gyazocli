@@ -71,6 +71,7 @@ Adopt and document the existing top-level command structure.
 - `gyazo stats`
   - Default range: from 8 days ago to yesterday
   - Default behavior: weekly Markdown summary.
+  - Section rows are rendered as bullet lists (`- <label>: <count>`) for terminal readability.
   - Options:
     - `--date <yyyy|yyyy-mm|yyyy-mm-dd>` (window end date anchor; default: yesterday)
     - `--days <number>` (default: `7`)

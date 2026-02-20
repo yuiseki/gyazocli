@@ -224,11 +224,11 @@ test('stats outputs markdown sections for weekly summary', () => {
   expect(result.stdout).toMatch(/Window: 2026-02-14 to 2026-02-20 \(7 days\)/);
   expect(result.stdout).toMatch(/### Upload Time \(Hour\)/);
   expect(result.stdout).toMatch(/### Apps/);
-  expect(result.stdout).toMatch(/\| Chrome \| 1 \|/);
+  expect(result.stdout).toMatch(/- Chrome: 1/);
   expect(result.stdout).toMatch(/### Domains/);
-  expect(result.stdout).toMatch(/\| x\.com \| 1 \|/);
+  expect(result.stdout).toMatch(/- x\.com: 1/);
   expect(result.stdout).toMatch(/### Tags/);
-  expect(result.stdout).toMatch(/\| #tag1 \| 1 \|/);
+  expect(result.stdout).toMatch(/- #tag1: 1/);
 });
 
 test('stats default window is from 8 days ago to yesterday', () => {
@@ -268,7 +268,7 @@ test('stats default window is from 8 days ago to yesterday', () => {
   expect(result.stdout).toMatch(
     new RegExp(`Window: ${range.startLabel} to ${range.endLabel} \\(7 days\\)`),
   );
-  expect(result.stdout).toMatch(/\| WeeklyApp \| 1 \|/);
+  expect(result.stdout).toMatch(/- WeeklyApp: 1/);
   expect(result.stdout).not.toContain('TodayApp');
 });
 
@@ -300,7 +300,7 @@ test('domains de-duplicates same image id across hourly buckets', () => {
   expect(result.stdout).toMatch(/Total images with domain metadata: 2/);
 });
 
-test('stats escapes markdown table cells that contain pipes', () => {
+test('stats keeps labels with pipes in bullet output', () => {
   const cacheDir = createTempCacheDir();
   const imageId = 'st000000000000000000000000000001';
 
@@ -317,7 +317,7 @@ test('stats escapes markdown table cells that contain pipes', () => {
 
   const result = runCli(cacheDir, ['stats', '--date', '2026-02-20', '--days', '1', '--top', '3']);
   expect(result.status).toBe(0);
-  expect(result.stdout).toMatch(/\| Foo\\\|Bar \| 1 \|/);
+  expect(result.stdout).toMatch(/- Foo\|Bar: 1/);
 });
 
 test('get prints markdown fields, objects and truncated OCR preview', () => {

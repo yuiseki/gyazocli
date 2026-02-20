@@ -62,7 +62,8 @@ Store cache files under XDG-style user cache location by default, with an enviro
     - Update both hourly image index (`<HH>.json`) and hourly metadata extract caches (`<HH>-*.json`).
     - Ranking is computed from warmed image cache data for that run (no historical cache merge).
 - `gyazo stats`:
-  - Default window is weekly (`7` days), output is Markdown.
+  - Default window is from 8 days ago to yesterday (`7` days), output is Markdown.
+  - Section rows are rendered as bullet lists (`- <label>: <count>`), not tables.
   - Aggregates upload time bands and rankings of apps/domains/tags from hourly caches.
   - Uses the same hourly metadata extract cache mechanism as ranking commands.
   - If cache data for the target window is absent, warming is triggered once, then summary is built from cache.

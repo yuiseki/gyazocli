@@ -1184,14 +1184,9 @@ function buildUploadTimeSummaryFromImageCache(
   };
 }
 
-function escapeMarkdownCell(value: string): string {
-  return value.replace(/\|/g, '\\|');
-}
-
 function appendStatsRankSection(
   lines: string[],
   title: string,
-  header: string,
   rows: Array<{ label: string; count: number }>,
   top: number,
 ): void {
@@ -1203,10 +1198,8 @@ function appendStatsRankSection(
     return;
   }
 
-  lines.push(`| ${header} | Count |`);
-  lines.push('| --- | ---: |');
   for (const row of filtered) {
-    lines.push(`| ${escapeMarkdownCell(row.label)} | ${row.count} |`);
+    lines.push(`- ${row.label}: ${row.count}`);
   }
   lines.push('');
 }
@@ -1232,7 +1225,6 @@ function renderStatsMarkdown(params: {
   appendStatsRankSection(
     lines,
     'Upload Time (Hour)',
-    'Hour',
     params.uploadTime.byHour.map(item => ({
       label: `${String(item.hour).padStart(2, '0')}:00`,
       count: item.count,
@@ -1243,7 +1235,6 @@ function renderStatsMarkdown(params: {
   appendStatsRankSection(
     lines,
     'Upload Weekday',
-    'Weekday',
     params.uploadTime.byWeekday.map(item => ({
       label: WEEKDAY_LABELS[item.weekday] || String(item.weekday),
       count: item.count,
@@ -1254,7 +1245,6 @@ function renderStatsMarkdown(params: {
   appendStatsRankSection(
     lines,
     'Apps',
-    'App',
     params.apps.map(item => ({ label: item.app, count: item.count })),
     params.top,
   );
@@ -1262,7 +1252,6 @@ function renderStatsMarkdown(params: {
   appendStatsRankSection(
     lines,
     'Domains',
-    'Domain',
     params.domains.map(item => ({ label: item.domain, count: item.count })),
     params.top,
   );
@@ -1270,7 +1259,6 @@ function renderStatsMarkdown(params: {
   appendStatsRankSection(
     lines,
     'Tags',
-    'Tag',
     params.tags.map(item => ({ label: `#${item.tag}`, count: item.count })),
     params.top,
   );
