@@ -42,25 +42,39 @@ Adopt and document the existing top-level command structure.
     - `-j, --json`
     - `--no-cache`
 - `gyazo apps`
+  - Default range: from 8 days ago to yesterday
   - Options:
-    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>` (default: today)
+    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>`
+    - `--today` (target today only)
     - `-l, --limit <number>` (default: `10`, max: `10`)
     - `--max-pages <number>` (default: `10`)
     - `-j, --json`
     - `--no-cache`
 - `gyazo domains`
+  - Default range: from 8 days ago to yesterday
   - Options:
-    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>` (default: today)
+    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>`
+    - `--today` (target today only)
     - `-l, --limit <number>` (default: `10`, max: `10`)
     - `--max-pages <number>` (default: `10`)
     - `-j, --json`
     - `--no-cache`
 - `gyazo tags`
+  - Default range: from 8 days ago to yesterday
   - Options:
-    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>` (default: today)
+    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>`
+    - `--today` (target today only)
     - `-l, --limit <number>` (default: `10`, max: `10`)
     - `--max-pages <number>` (default: `10`)
     - `-j, --json`
+    - `--no-cache`
+- `gyazo stats`
+  - Default behavior: weekly (`7` days) Markdown summary.
+  - Options:
+    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>` (window end date anchor)
+    - `--days <number>` (default: `7`)
+    - `--top <number>` (default: `10`)
+    - `--max-pages <number>` (default: `10`)
     - `--no-cache`
 - `gyazo upload [path]`
   - Options:

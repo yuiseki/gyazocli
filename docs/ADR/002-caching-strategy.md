@@ -50,6 +50,9 @@ Store cache files under XDG-style user cache location by default, with an enviro
   - Skips detail fetch when cached record already has `ocr`.
   - Writes/merges hourly index files.
 - `gyazo apps`, `gyazo domains`, `gyazo tags`:
+  - Default target range is from 8 days ago to yesterday.
+  - `--today` targets only today.
+  - `--date` can target a specific day/month/year.
   - With default cache mode:
     - Read ranking from hourly metadata extract caches for fast aggregation.
     - If `<HH>-*.json` is missing but `<HH>.json` exists, build it once from image cache and persist.
@@ -58,6 +61,11 @@ Store cache files under XDG-style user cache location by default, with an enviro
     - Force API-based warming by scanning list pages (`per_page=100`) in the target date range.
     - Update both hourly image index (`<HH>.json`) and hourly metadata extract caches (`<HH>-*.json`).
     - Ranking is computed from warmed image cache data for that run (no historical cache merge).
+- `gyazo stats`:
+  - Default window is weekly (`7` days), output is Markdown.
+  - Aggregates upload time bands and rankings of apps/domains/tags from hourly caches.
+  - Uses the same hourly metadata extract cache mechanism as ranking commands.
+  - If cache data for the target window is absent, warming is triggered once, then summary is built from cache.
 
 ## Consequences
 - Cache is portable and independent from the repository working tree.

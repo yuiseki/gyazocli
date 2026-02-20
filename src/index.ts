@@ -19,6 +19,7 @@ import { ensureAccessToken, getStoredConfig, setStoredConfig } from './credentia
 
 const program = new Command();
 const UPLOAD_DESC_TAG = '#gyazocli_uploads';
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 program
   .name('gyazo')
@@ -408,6 +409,12 @@ type TagRankingSummary = {
   totalTagAssignments: number;
 };
 
+type UploadTimeSummary = {
+  totalImages: number;
+  byHour: Array<{ hour: number; count: number }>;
+  byWeekday: Array<{ weekday: number; count: number }>;
+};
+
 type RankingFromHourlySummary = {
   ranking: Array<{ key: string; count: number }>;
   totalImages: number;
@@ -496,6 +503,109 @@ function parseDateOption(value?: string): ParsedDateOption {
 
   console.error('Error: --date format must be yyyy or yyyy-mm or yyyy-mm-dd.');
   process.exit(1);
+}
+
+function formatDateYmd(date: Date): string {
+  const year = String(date.getFullYear());
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function buildRecentWeekRangeUntilYesterday(): ParsedDateOption {
+  const today = new Date();
+
+  const end = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate() - 1,
+    23,
+    59,
+    59,
+    999,
+  );
+  const start = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate() - 8,
+    0,
+    0,
+    0,
+    0,
+  );
+
+  return {
+    granularity: 'day',
+    dateKey: `${formatDateYmd(start)}..${formatDateYmd(end)}`,
+    start,
+    end,
+  };
+}
+
+function resolveRankingRangeOption(options: { date?: string; today?: boolean }): ParsedDateOption {
+  if (options.today && options.date) {
+    console.error('Error: --today and --date cannot be used together.');
+    process.exit(1);
+  }
+  if (options.today) {
+    return parseDateOption();
+  }
+  if (options.date) {
+    return parseDateOption(options.date);
+  }
+  return buildRecentWeekRangeUntilYesterday();
+}
+
+function buildStatsDateRange(dateOption: string | undefined, daysOption: string): {
+  range: ParsedDateOption;
+  days: number;
+  startLabel: string;
+  endLabel: string;
+} {
+  const days = parsePositiveIntegerOption(daysOption, '--days');
+  let endDate: Date;
+
+  if (dateOption) {
+    const parsed = parseDateOption(dateOption);
+    endDate = new Date(parsed.end);
+  } else {
+    const now = new Date();
+    endDate = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      23,
+      59,
+      59,
+      999,
+    );
+  }
+
+  const startDate = new Date(
+    endDate.getFullYear(),
+    endDate.getMonth(),
+    endDate.getDate(),
+    0,
+    0,
+    0,
+    0,
+  );
+  startDate.setDate(startDate.getDate() - (days - 1));
+
+  const startLabel = formatDateYmd(startDate);
+  const endLabel = formatDateYmd(endDate);
+
+  return {
+    range: {
+      granularity: 'day',
+      dateKey: `${startLabel}..${endLabel}`,
+      start: startDate,
+      end: endDate,
+    },
+    days,
+    startLabel,
+    endLabel,
+  };
 }
 
 function getDateHourStrings(): string[] {
@@ -984,6 +1094,180 @@ function buildTagsRankingFromHourlyCache(targetDate: ParsedDateOption): TagRanki
   };
 }
 
+function buildUploadTimeSummaryFromHourlyCache(targetDate: ParsedDateOption): UploadTimeSummary {
+  const seen = new Set<string>();
+  const hourCounts = Array.from({ length: 24 }, (_, hour) => ({ hour, count: 0 }));
+  const weekdayCounts = Array.from({ length: 7 }, (_, weekday) => ({ weekday, count: 0 }));
+  const dates = getDatePartsInRange(targetDate.start, targetDate.end);
+  const hours = getDateHourStrings();
+
+  for (const date of dates) {
+    for (const hourText of hours) {
+      const hour = Number(hourText);
+      const imageIds = loadHourlyCache(date.year, date.month, date.day, hourText) || [];
+      const weekday = new Date(
+        Number(date.year),
+        Number(date.month) - 1,
+        Number(date.day),
+        hour,
+        0,
+        0,
+        0,
+      ).getDay();
+
+      for (const imageId of imageIds) {
+        if (seen.has(imageId)) continue;
+        seen.add(imageId);
+        hourCounts[hour].count++;
+        weekdayCounts[weekday].count++;
+      }
+    }
+  }
+
+  return {
+    totalImages: seen.size,
+    byHour: hourCounts.sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.hour - b.hour;
+    }),
+    byWeekday: weekdayCounts.sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.weekday - b.weekday;
+    }),
+  };
+}
+
+function buildUploadTimeSummaryFromImageCache(
+  imageIds: string[],
+  targetDate: ParsedDateOption,
+): UploadTimeSummary {
+  const seen = new Set<string>();
+  const hourCounts = Array.from({ length: 24 }, (_, hour) => ({ hour, count: 0 }));
+  const weekdayCounts = Array.from({ length: 7 }, (_, weekday) => ({ weekday, count: 0 }));
+
+  for (const imageId of imageIds) {
+    if (seen.has(imageId)) continue;
+
+    const image = loadImageCache(imageId);
+    const createdAtText = normalizeText(image?.created_at);
+    if (!createdAtText) continue;
+
+    const createdAt = new Date(createdAtText);
+    if (Number.isNaN(createdAt.getTime())) continue;
+    if (createdAt < targetDate.start || createdAt > targetDate.end) continue;
+
+    seen.add(imageId);
+    hourCounts[createdAt.getHours()].count++;
+    weekdayCounts[createdAt.getDay()].count++;
+  }
+
+  return {
+    totalImages: seen.size,
+    byHour: hourCounts.sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.hour - b.hour;
+    }),
+    byWeekday: weekdayCounts.sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.weekday - b.weekday;
+    }),
+  };
+}
+
+function escapeMarkdownCell(value: string): string {
+  return value.replace(/\|/g, '\\|');
+}
+
+function appendStatsRankSection(
+  lines: string[],
+  title: string,
+  header: string,
+  rows: Array<{ label: string; count: number }>,
+  top: number,
+): void {
+  lines.push(`### ${title}`);
+  const filtered = rows.filter(row => row.count > 0).slice(0, top);
+  if (filtered.length === 0) {
+    lines.push('- No data');
+    lines.push('');
+    return;
+  }
+
+  lines.push(`| ${header} | Count |`);
+  lines.push('| --- | ---: |');
+  for (const row of filtered) {
+    lines.push(`| ${escapeMarkdownCell(row.label)} | ${row.count} |`);
+  }
+  lines.push('');
+}
+
+function renderStatsMarkdown(params: {
+  startLabel: string;
+  endLabel: string;
+  days: number;
+  totalUploads: number;
+  uploadTime: UploadTimeSummary;
+  apps: AppRank[];
+  domains: DomainRank[];
+  tags: TagRank[];
+  top: number;
+}): string {
+  const lines: string[] = [];
+  lines.push('## Gyazo Stats');
+  lines.push('');
+  lines.push(`- Window: ${params.startLabel} to ${params.endLabel} (${params.days} days)`);
+  lines.push(`- Total uploads: ${params.totalUploads}`);
+  lines.push('');
+
+  appendStatsRankSection(
+    lines,
+    'Upload Time (Hour)',
+    'Hour',
+    params.uploadTime.byHour.map(item => ({
+      label: `${String(item.hour).padStart(2, '0')}:00`,
+      count: item.count,
+    })),
+    params.top,
+  );
+
+  appendStatsRankSection(
+    lines,
+    'Upload Weekday',
+    'Weekday',
+    params.uploadTime.byWeekday.map(item => ({
+      label: WEEKDAY_LABELS[item.weekday] || String(item.weekday),
+      count: item.count,
+    })),
+    Math.min(params.top, 7),
+  );
+
+  appendStatsRankSection(
+    lines,
+    'Apps',
+    'App',
+    params.apps.map(item => ({ label: item.app, count: item.count })),
+    params.top,
+  );
+
+  appendStatsRankSection(
+    lines,
+    'Domains',
+    'Domain',
+    params.domains.map(item => ({ label: item.domain, count: item.count })),
+    params.top,
+  );
+
+  appendStatsRankSection(
+    lines,
+    'Tags',
+    'Tag',
+    params.tags.map(item => ({ label: `#${item.tag}`, count: item.count })),
+    params.top,
+  );
+
+  return lines.join('\n').trimEnd();
+}
+
 async function readStdinBuffer(): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -1393,7 +1677,8 @@ program
 program
   .command('apps')
   .description('Rank metadata app names for a specific date')
-  .option('--date <yyyy|yyyy-mm|yyyy-mm-dd>', 'target date (default: today)')
+  .option('--date <yyyy|yyyy-mm|yyyy-mm-dd>', 'target date/range')
+  .option('--today', 'target today only (overrides default weekly range)')
   .option('-l, --limit <number>', 'maximum ranking rows (max: 10)', '10')
   .option('--max-pages <number>', 'max pages to scan before stopping', '10')
   .option('-j, --json', 'output as JSON')
@@ -1401,7 +1686,7 @@ program
   .action(async (options) => {
     await ensureAccessToken();
     try {
-      const targetDate = parseDateOption(options.date);
+      const targetDate = resolveRankingRangeOption(options);
       const requestedLimit = parsePositiveIntegerOption(options.limit, '--limit');
       const limit = Math.min(requestedLimit, 10);
       const maxPages = parsePositiveIntegerOption(options.maxPages, '--max-pages');
@@ -1459,7 +1744,8 @@ program
 program
   .command('domains')
   .description('Rank metadata URL domains for a specific date')
-  .option('--date <yyyy|yyyy-mm|yyyy-mm-dd>', 'target date (default: today)')
+  .option('--date <yyyy|yyyy-mm|yyyy-mm-dd>', 'target date/range')
+  .option('--today', 'target today only (overrides default weekly range)')
   .option('-l, --limit <number>', 'maximum ranking rows (max: 10)', '10')
   .option('--max-pages <number>', 'max pages to scan before stopping', '10')
   .option('-j, --json', 'output as JSON')
@@ -1467,7 +1753,7 @@ program
   .action(async (options) => {
     await ensureAccessToken();
     try {
-      const targetDate = parseDateOption(options.date);
+      const targetDate = resolveRankingRangeOption(options);
       const requestedLimit = parsePositiveIntegerOption(options.limit, '--limit');
       const limit = Math.min(requestedLimit, 10);
       const maxPages = parsePositiveIntegerOption(options.maxPages, '--max-pages');
@@ -1525,7 +1811,8 @@ program
 program
   .command('tags')
   .description('Rank metadata tags for a specific date')
-  .option('--date <yyyy|yyyy-mm|yyyy-mm-dd>', 'target date (default: today)')
+  .option('--date <yyyy|yyyy-mm|yyyy-mm-dd>', 'target date/range')
+  .option('--today', 'target today only (overrides default weekly range)')
   .option('-l, --limit <number>', 'maximum ranking rows (max: 10)', '10')
   .option('--max-pages <number>', 'max pages to scan before stopping', '10')
   .option('-j, --json', 'output as JSON')
@@ -1533,7 +1820,7 @@ program
   .action(async (options) => {
     await ensureAccessToken();
     try {
-      const targetDate = parseDateOption(options.date);
+      const targetDate = resolveRankingRangeOption(options);
       const requestedLimit = parsePositiveIntegerOption(options.limit, '--limit');
       const limit = Math.min(requestedLimit, 10);
       const maxPages = parsePositiveIntegerOption(options.maxPages, '--max-pages');
@@ -1582,6 +1869,83 @@ program
       console.log(`Total images with tag metadata: ${summary.imageCountWithTags}`);
     } catch (error: any) {
       console.error('Error ranking tags:', error.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('stats')
+  .description('Show weekly stats summary in Markdown')
+  .option('--date <yyyy|yyyy-mm|yyyy-mm-dd>', 'window end date anchor (default: today)')
+  .option('--days <number>', 'window length in days', '7')
+  .option('--top <number>', 'rows per section', '10')
+  .option('--max-pages <number>', 'max pages to fetch when warming cache', '10')
+  .option('--no-cache', 'force fetch from API')
+  .action(async (options) => {
+    await ensureAccessToken();
+    try {
+      const { range, days, startLabel, endLabel } = buildStatsDateRange(options.date, options.days || '7');
+      const top = Math.min(parsePositiveIntegerOption(options.top, '--top'), 20);
+      const maxPages = parsePositiveIntegerOption(options.maxPages, '--max-pages');
+      const useCache = options.cache !== false;
+
+      let uploadTime: UploadTimeSummary;
+      let apps: AppRank[] = [];
+      let domains: DomainRank[] = [];
+      let tags: TagRank[] = [];
+      let totalUploads = 0;
+
+      if (useCache) {
+        uploadTime = buildUploadTimeSummaryFromHourlyCache(range);
+        if (uploadTime.totalImages === 0) {
+          await warmDateCacheForApps(range, maxPages, true);
+          uploadTime = buildUploadTimeSummaryFromHourlyCache(range);
+        }
+
+        let appsSummary = buildAppsRankingFromHourlyCache(range);
+        if (uploadTime.totalImages > 0 && appsSummary.totalImages === 0) {
+          await warmDateCacheForApps(range, maxPages, true);
+          appsSummary = buildAppsRankingFromHourlyCache(range);
+        }
+
+        let domainsSummary = buildDomainsRankingFromHourlyCache(range);
+        if (uploadTime.totalImages > 0 && domainsSummary.totalImages === 0) {
+          await warmDateCacheForDomains(range, maxPages, true);
+          domainsSummary = buildDomainsRankingFromHourlyCache(range);
+        }
+
+        let tagsSummary = buildTagsRankingFromHourlyCache(range);
+        if (uploadTime.totalImages > 0 && tagsSummary.totalImages === 0) {
+          await warmDateCacheForTags(range, maxPages, true);
+          tagsSummary = buildTagsRankingFromHourlyCache(range);
+        }
+
+        apps = appsSummary.ranking;
+        domains = domainsSummary.ranking;
+        tags = tagsSummary.ranking;
+        totalUploads = uploadTime.totalImages;
+      } else {
+        const imageIds = await warmDateCacheForTags(range, maxPages, false);
+        uploadTime = buildUploadTimeSummaryFromImageCache(imageIds, range);
+        apps = buildAppsRankingFromCache(imageIds);
+        domains = buildDomainsRankingFromCache(imageIds);
+        tags = buildTagsRankingFromCache(imageIds).ranking;
+        totalUploads = uploadTime.totalImages;
+      }
+
+      console.log(renderStatsMarkdown({
+        startLabel,
+        endLabel,
+        days,
+        totalUploads,
+        uploadTime,
+        apps,
+        domains,
+        tags,
+        top,
+      }));
+    } catch (error: any) {
+      console.error('Error building stats:', error.message);
       process.exit(1);
     }
   });
