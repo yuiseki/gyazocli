@@ -1,6 +1,6 @@
 {
   "name": "@yuiseki/gyazocli",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Gyazo Memory CLI for AI Secretary",
   "main": "dist/index.js",
   "bin": {
