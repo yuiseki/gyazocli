@@ -42,7 +42,7 @@ export function getHourlyPath(year: string, month: string, day: string, hour: st
   return path.join(dir, `${hour}.json`);
 }
 
-export type HourlyMetadataKind = 'apps' | 'domains' | 'tags';
+export type HourlyMetadataKind = 'apps' | 'domains' | 'tags' | 'locations';
 
 function getHourlyMetadataPath(
   kind: HourlyMetadataKind,

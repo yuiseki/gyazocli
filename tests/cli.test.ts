@@ -60,7 +60,7 @@ function writeHourlyIndex(
 
 function writeHourlyMeta(
   cacheDir: string,
-  kind: 'apps' | 'domains' | 'tags',
+  kind: 'apps' | 'domains' | 'tags' | 'locations',
   year: string,
   month: string,
   day: string,
@@ -165,6 +165,30 @@ test('domains ranking is built from hourly metadata cache', () => {
   expect(result.stdout).toMatch(/2\. example\.com: 1/);
 });
 
+test('locations ranking is built from hourly metadata cache', () => {
+  const cacheDir = createTempCacheDir();
+
+  writeHourlyIndex(cacheDir, '2026', '01', '15', '08', [
+    'lc000000000000000000000000000001',
+    'lc000000000000000000000000000002',
+  ]);
+  writeHourlyMeta(cacheDir, 'locations', '2026', '01', '15', '08', {
+    lc000000000000000000000000000001: ['東京都台東区竜泉'],
+    lc000000000000000000000000000002: ['東京都台東区竜泉'],
+  });
+
+  writeHourlyIndex(cacheDir, '2026', '01', '16', '09', ['lc000000000000000000000000000003']);
+  writeHourlyMeta(cacheDir, 'locations', '2026', '01', '16', '09', {
+    lc000000000000000000000000000003: ['東京都千代田区丸の内'],
+  });
+
+  const result = runCli(cacheDir, ['locations', '--date', '2026-01', '--limit', '2']);
+  expect(result.status).toBe(0);
+  expect(result.stdout).toMatch(/Locations on 2026-01/);
+  expect(result.stdout).toMatch(/1\. 東京都台東区竜泉: 2/);
+  expect(result.stdout).toMatch(/2\. 東京都千代田区丸の内: 1/);
+});
+
 test('tags can build hourly tags cache from image cache when missing', () => {
   const cacheDir = createTempCacheDir();
   const imageId1 = 'ef000000000000000000000000000001';
@@ -190,6 +214,45 @@ test('tags can build hourly tags cache from image cache when missing', () => {
   expect(result.stdout).toMatch(/#alpha: 1/);
 
   const builtPath = path.join(cacheDir, 'hourly', '2026', '02', '18', '09-tags.json');
+  expect(fs.existsSync(builtPath)).toBe(true);
+});
+
+test('locations can build hourly locations cache from image cache when missing', () => {
+  const cacheDir = createTempCacheDir();
+  const imageId1 = 'lo000000000000000000000000000001';
+  const imageId2 = 'lo000000000000000000000000000002';
+
+  writeHourlyIndex(cacheDir, '2026', '02', '18', '09', [imageId1, imageId2]);
+
+  writeImageCache(cacheDir, imageId1, {
+    image_id: imageId1,
+    created_at: '2026-02-18T09:10:00+09:00',
+    metadata: {
+      exif_address: {
+        ja: {
+          address_components: [
+            { long_name: '東京都', types: ['administrative_area_level_1'] },
+            { long_name: '台東区', types: ['locality'] },
+            { long_name: '竜泉', types: ['sublocality_level_1'] },
+          ],
+        },
+      },
+    },
+  });
+  writeImageCache(cacheDir, imageId2, {
+    image_id: imageId2,
+    created_at: '2026-02-18T09:20:00+09:00',
+    metadata: {
+      exif_address: '東京都台東区竜泉',
+    },
+  });
+
+  const result = runCli(cacheDir, ['locations', '--date', '2026-02-18', '--limit', '5']);
+  expect(result.status).toBe(0);
+  expect(result.stdout).toMatch(/Locations on 2026-02-18/);
+  expect(result.stdout).toMatch(/東京都台東区竜泉: 2/);
+
+  const builtPath = path.join(cacheDir, 'hourly', '2026', '02', '18', '09-locations.json');
   expect(fs.existsSync(builtPath)).toBe(true);
 });
 

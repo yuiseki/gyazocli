@@ -68,6 +68,15 @@ Adopt and document the existing top-level command structure.
     - `--max-pages <number>` (default: `10`)
     - `-j, --json`
     - `--no-cache`
+- `gyazo locations`
+  - Default range: from 8 days ago to yesterday
+  - Options:
+    - `--date <yyyy|yyyy-mm|yyyy-mm-dd>`
+    - `--today` (target today only)
+    - `-l, --limit <number>` (default: `10`, max: `10`)
+    - `--max-pages <number>` (default: `10`)
+    - `-j, --json`
+    - `--no-cache`
 - `gyazo stats`
   - Default range: from 8 days ago to yesterday
   - Default behavior: weekly Markdown summary.
@@ -94,7 +103,7 @@ Adopt and document the existing top-level command structure.
   - Supported types: `json`, `hourly`
 
 ### 3. Output and Behavior Notes
-- `-j, --json` is available on `config get`, `list`, `get`, `search`, `apps`, `domains`, and `tags`.
+- `-j, --json` is available on `config get`, `list`, `get`, `search`, `apps`, `domains`, `tags`, and `locations`.
 - There are no global `--plain` or `--verbose` flags in current implementation.
 - Authenticated commands call token resolution before API access.
 

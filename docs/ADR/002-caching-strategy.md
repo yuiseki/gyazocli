@@ -30,6 +30,7 @@ Store cache files under XDG-style user cache location by default, with an enviro
   - `<cacheRoot>/hourly/<YYYY>/<MM>/<DD>/<HH>-apps.json`
   - `<cacheRoot>/hourly/<YYYY>/<MM>/<DD>/<HH>-domains.json`
   - `<cacheRoot>/hourly/<YYYY>/<MM>/<DD>/<HH>-tags.json`
+  - `<cacheRoot>/hourly/<YYYY>/<MM>/<DD>/<HH>-locations.json`
 - File content:
   - JSON object keyed by `image_id`.
   - Value is string array of extracted metadata tokens for that command.
@@ -37,6 +38,7 @@ Store cache files under XDG-style user cache location by default, with an enviro
     - `apps`: `{ "<imageId>": ["Chrome"] }`
     - `domains`: `{ "<imageId>": ["x.com"] }`
     - `tags`: `{ "<imageId>": ["ゆいせきのコーデ", "ゆいせきの自撮り"] }`
+    - `locations`: `{ "<imageId>": ["東京都台東区竜泉"] }`
 - Purpose:
   - Avoid repeated full image-cache scans when computing rankings.
   - Preserve negative results (`[]`) per image so commands do not re-fetch detail repeatedly.
@@ -49,7 +51,7 @@ Store cache files under XDG-style user cache location by default, with an enviro
   - Fetches list pages (`per_page=100`) for a bounded date range.
   - Skips detail fetch when cached record already has `ocr`.
   - Writes/merges hourly index files.
-- `gyazo apps`, `gyazo domains`, `gyazo tags`:
+- `gyazo apps`, `gyazo domains`, `gyazo tags`, `gyazo locations`:
   - Default target range is from 8 days ago to yesterday.
   - `--today` targets only today.
   - `--date` can target a specific day/month/year.
