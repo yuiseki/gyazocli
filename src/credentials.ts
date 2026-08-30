@@ -39,7 +39,11 @@ export function setStoredConfig(key: string, value: string): void {
   console.error(`Config set: ${key}=${value}`);
 }
 
-export async function ensureAccessToken(): Promise<string> {
+/**
+ * Load the access token if there is one, without failing when there is not.
+ * Read-only commands fall back to anonymous access instead of exiting.
+ */
+export function resolveAccessToken(): string | undefined {
   if (config.GYAZO_ACCESS_TOKEN) {
     return config.GYAZO_ACCESS_TOKEN;
   }
@@ -48,6 +52,15 @@ export async function ensureAccessToken(): Promise<string> {
   if (storedToken) {
     setAccessToken(storedToken);
     return storedToken;
+  }
+
+  return undefined;
+}
+
+export async function ensureAccessToken(): Promise<string> {
+  const token = resolveAccessToken();
+  if (token) {
+    return token;
   }
 
   console.error('Error: Gyazo Access Token is not set.');

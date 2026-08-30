@@ -4,6 +4,7 @@ import { config } from './config';
 
 const DEFAULT_API_ORIGIN = 'https://api.gyazo.com';
 const DEFAULT_UPLOAD_ORIGIN = 'https://upload.gyazo.com';
+const DEFAULT_WEB_ORIGIN = 'https://gyazo.com';
 
 function stripTrailingSlash(origin: string): string {
   return origin.replace(/\/+$/, '');
@@ -17,10 +18,15 @@ function uploadOrigin(): string {
   return stripTrailingSlash(config.GYAZO_UPLOAD_ORIGIN || DEFAULT_UPLOAD_ORIGIN);
 }
 
+function webOrigin(): string {
+  return stripTrailingSlash(config.GYAZO_WEB_ORIGIN || DEFAULT_WEB_ORIGIN);
+}
+
 const apiBaseUrl = () => `${apiOrigin()}/api/images`;
 const apiSearchUrl = () => `${apiOrigin()}/api/search`;
 const apiUsersMeUrl = () => `${apiOrigin()}/api/users/me`;
 const apiUploadUrl = () => `${uploadOrigin()}/api/upload`;
+const webCollectionUrl = (id: string) => `${webOrigin()}/collections/${id}.json`;
 
 export interface GyazoImage {
   image_id: string;
@@ -64,18 +70,19 @@ export interface GyazoUploadOptions {
   timestamp?: number;
 }
 
-async function requestWithRetry(url: string, params: any = {}) {
-  const headers = { Authorization: `Bearer ${config.GYAZO_ACCESS_TOKEN}` };
-  
+async function requestWithRetry(url: string, params: any = {}, headers?: Record<string, string>) {
+  const requestHeaders =
+    headers ?? { Authorization: `Bearer ${config.GYAZO_ACCESS_TOKEN}` };
+
   try {
-    const response = await axios.get(url, { headers, params });
+    const response = await axios.get(url, { headers: requestHeaders, params });
     return response.data;
   } catch (error: any) {
     if (error.response && error.response.status === 429) {
       const retryAfter = parseInt(error.response.headers['retry-after'] || '5', 10);
       console.warn(`Rate limited. Retrying after ${retryAfter} seconds...`);
       await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
-      return requestWithRetry(url, params);
+      return requestWithRetry(url, params, headers);
     }
     throw error;
   }
@@ -95,6 +102,23 @@ export async function searchImages(query: string, page: number = 1, perPage: num
 
 export async function getCurrentUser(): Promise<GyazoMeResponse> {
   return requestWithRetry(apiUsersMeUrl());
+}
+
+/**
+ * Collections are read through the public web endpoint. It returns the
+ * collection metadata plus the first 100 images with their full detail in a
+ * single request, and it works without a token for public collections, which
+ * is what lets an agent run read-only with no credentials at all.
+ */
+export async function getCollection(
+  collectionId: string,
+  options: { anonymous?: boolean } = {},
+): Promise<any> {
+  const headers: Record<string, string> = {};
+  if (!options.anonymous && config.GYAZO_ACCESS_TOKEN) {
+    headers.Authorization = `Bearer ${config.GYAZO_ACCESS_TOKEN}`;
+  }
+  return requestWithRetry(webCollectionUrl(collectionId), {}, headers);
 }
 
 export async function uploadImage(options: GyazoUploadOptions): Promise<GyazoImage> {
