@@ -8,6 +8,8 @@ const configSchema = z.object({
   GYAZO_CLIENT_ID: z.string().optional(),
   GYAZO_CLIENT_SECRET: z.string().optional(),
   GYAZO_CACHE_DIR: z.string().optional(),
+  GYAZO_API_ORIGIN: z.string().optional(),
+  GYAZO_UPLOAD_ORIGIN: z.string().optional(),
 });
 
 export let config = configSchema.parse({
@@ -15,6 +17,8 @@ export let config = configSchema.parse({
   GYAZO_CLIENT_ID: process.env.GYAZO_CLIENT_ID,
   GYAZO_CLIENT_SECRET: process.env.GYAZO_CLIENT_SECRET,
   GYAZO_CACHE_DIR: process.env.GYAZO_CACHE_DIR,
+  GYAZO_API_ORIGIN: process.env.GYAZO_API_ORIGIN,
+  GYAZO_UPLOAD_ORIGIN: process.env.GYAZO_UPLOAD_ORIGIN,
 });
 
 export function setAccessToken(token: string) {

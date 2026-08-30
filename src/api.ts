@@ -2,10 +2,25 @@ import axios from 'axios';
 import FormData from 'form-data';
 import { config } from './config';
 
-const API_BASE_URL = 'https://api.gyazo.com/api/images';
-const API_SEARCH_URL = 'https://api.gyazo.com/api/search';
-const API_USERS_ME_URL = 'https://api.gyazo.com/api/users/me';
-const API_UPLOAD_URL = 'https://upload.gyazo.com/api/upload';
+const DEFAULT_API_ORIGIN = 'https://api.gyazo.com';
+const DEFAULT_UPLOAD_ORIGIN = 'https://upload.gyazo.com';
+
+function stripTrailingSlash(origin: string): string {
+  return origin.replace(/\/+$/, '');
+}
+
+function apiOrigin(): string {
+  return stripTrailingSlash(config.GYAZO_API_ORIGIN || DEFAULT_API_ORIGIN);
+}
+
+function uploadOrigin(): string {
+  return stripTrailingSlash(config.GYAZO_UPLOAD_ORIGIN || DEFAULT_UPLOAD_ORIGIN);
+}
+
+const apiBaseUrl = () => `${apiOrigin()}/api/images`;
+const apiSearchUrl = () => `${apiOrigin()}/api/search`;
+const apiUsersMeUrl = () => `${apiOrigin()}/api/users/me`;
+const apiUploadUrl = () => `${uploadOrigin()}/api/upload`;
 
 export interface GyazoImage {
   image_id: string;
@@ -67,19 +82,19 @@ async function requestWithRetry(url: string, params: any = {}) {
 }
 
 export async function listImages(page: number = 1, perPage: number = 20): Promise<GyazoImage[]> {
-  return requestWithRetry(API_BASE_URL, { page, per_page: perPage });
+  return requestWithRetry(apiBaseUrl(), { page, per_page: perPage });
 }
 
 export async function getImageDetail(imageId: string): Promise<GyazoImage> {
-  return requestWithRetry(`${API_BASE_URL}/${imageId}`);
+  return requestWithRetry(`${apiBaseUrl()}/${imageId}`);
 }
 
 export async function searchImages(query: string, page: number = 1, perPage: number = 20): Promise<GyazoImage[]> {
-  return requestWithRetry(API_SEARCH_URL, { query, page, per: perPage });
+  return requestWithRetry(apiSearchUrl(), { query, page, per: perPage });
 }
 
 export async function getCurrentUser(): Promise<GyazoMeResponse> {
-  return requestWithRetry(API_USERS_ME_URL);
+  return requestWithRetry(apiUsersMeUrl());
 }
 
 export async function uploadImage(options: GyazoUploadOptions): Promise<GyazoImage> {
@@ -97,7 +112,7 @@ export async function uploadImage(options: GyazoUploadOptions): Promise<GyazoIma
     form.append('created_at', String(options.timestamp));
   }
 
-  const response = await axios.post(API_UPLOAD_URL, form, {
+  const response = await axios.post(apiUploadUrl(), form, {
     headers: form.getHeaders(),
   });
   return response.data;
