@@ -207,3 +207,56 @@ test('search exits non-zero when the API returns an error', async () => {
   }
 });
 
+// --- upload output ---------------------------------------------------------------
+
+const UPLOADED_ID = 'ab12cd34ef56ab12cd34ef56ab12cd34';
+
+function uploadStubHandler(): StubHandler {
+  return (_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        image_id: UPLOADED_ID,
+        permalink_url: `https://gyazo.com/${UPLOADED_ID}`,
+        url: `https://i.gyazo.com/${UPLOADED_ID}.png`,
+        type: 'png',
+        created_at: '2026-02-20T02:34:56+09:00',
+      }),
+    );
+  };
+}
+
+function writeTempImage(cacheDir: string): string {
+  const filePath = path.join(cacheDir, 'sample.png');
+  fs.writeFileSync(filePath, Buffer.from('89504e470d0a1a0a', 'hex'));
+  return filePath;
+}
+
+test('upload prints only the permalink URL on stdout by default', async () => {
+  const cacheDir = createTempCacheDir();
+  const imagePath = writeTempImage(cacheDir);
+  const stub = await startStubServer(uploadStubHandler());
+  try {
+    const result = await runCli(cacheDir, ['upload', imagePath], { uploadOrigin: stub.origin });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(`https://gyazo.com/${UPLOADED_ID}\n`);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('upload --json prints the full upload response', async () => {
+  const cacheDir = createTempCacheDir();
+  const imagePath = writeTempImage(cacheDir);
+  const stub = await startStubServer(uploadStubHandler());
+  try {
+    const result = await runCli(cacheDir, ['upload', '--json', imagePath], { uploadOrigin: stub.origin });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.image_id).toBe(UPLOADED_ID);
+    expect(parsed.permalink_url).toBe(`https://gyazo.com/${UPLOADED_ID}`);
+  } finally {
+    await stub.close();
+  }
+});
+

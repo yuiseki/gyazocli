@@ -2578,6 +2578,7 @@ program
 program
   .command('upload [path]')
   .description('Upload an image file (or read image bytes from stdin)')
+  .option('-j, --json', 'output the upload response as JSON')
   .option('--title <title>', 'image title')
   .option('--app <app>', 'application name', 'gyazocli')
   .option('--url <url>', 'source URL (sent as referer_url)')
@@ -2624,13 +2625,11 @@ program
         timestamp,
       });
 
-      console.log(`URL: ${uploaded.permalink_url}`);
-      console.log(`ID: ${uploaded.image_id}`);
-      if (uploaded.created_at) {
-        console.log(`Created at: ${formatCreatedAt(uploaded.created_at)}`);
+      if (options.json) {
+        console.log(JSON.stringify(uploaded, null, 2));
+      } else {
+        console.log(uploaded.permalink_url);
       }
-      console.log(`App: ${options.app || 'gyazocli'}`);
-      console.log(`Desc: ${desc}`);
     } catch (error: any) {
       console.error('Error uploading image:', error.message);
       process.exit(1);
