@@ -576,7 +576,7 @@ test('list rejects --hour with --date', () => {
   const cacheDir = createTempCacheDir();
   const result = runCli(cacheDir, ['ls', '--hour', '2026-02-20-02', '--date', '2026-02-20']);
   expect(result.status).toBe(1);
-  expect(result.stderr).toMatch(/--hour and --date cannot be used together/);
+  expect(result.stderr).toMatch(/--hour and --date\/--today cannot be used together/);
 });
 
 test('list rejects incompatible alias options', () => {
