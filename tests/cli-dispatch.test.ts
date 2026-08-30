@@ -158,3 +158,52 @@ test('get rejects a non-Gyazo URL', async () => {
   expect(result.stderr).toMatch(/is not a Gyazo image ID or URL/);
 });
 
+// --- exit codes on API failure ----------------------------------------------------
+
+test('get exits non-zero when the API returns an error', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer((_req, res) => {
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end('{}');
+  });
+  try {
+    const result = await runCli(cacheDir, ['get', 'ffffffffffffffffffffffffffffffff'], {
+      apiOrigin: stub.origin,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/Error getting image/);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('list exits non-zero when the API returns an error', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer((_req, res) => {
+    res.writeHead(500, { 'content-type': 'application/json' });
+    res.end('{}');
+  });
+  try {
+    const result = await runCli(cacheDir, ['list'], { apiOrigin: stub.origin });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/Error listing images/);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('search exits non-zero when the API returns an error', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer((_req, res) => {
+    res.writeHead(500, { 'content-type': 'application/json' });
+    res.end('{}');
+  });
+  try {
+    const result = await runCli(cacheDir, ['search', 'anything'], { apiOrigin: stub.origin });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/Error searching images/);
+  } finally {
+    await stub.close();
+  }
+});
+

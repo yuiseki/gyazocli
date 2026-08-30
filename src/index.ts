@@ -2061,6 +2061,7 @@ program
       }
     } catch (error: any) {
       console.error('Error listing images:', error.message);
+      process.exit(1);
     }
   });
 
@@ -2125,6 +2126,7 @@ program
       }
     } catch (error: any) {
       console.error('Error getting image:', error.message);
+      process.exit(1);
     }
   });
 
@@ -2157,6 +2159,7 @@ program
       }
     } catch (error: any) {
       console.error('Error searching images:', error.message);
+      process.exit(1);
     }
   });
 
