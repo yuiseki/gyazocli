@@ -21,6 +21,51 @@ const program = new Command();
 const UPLOAD_DESC_TAG = '#gyazocli_uploads';
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+const IMAGE_ID_PATTERN = /^[0-9a-f]{32}$/i;
+const GYAZO_HOST_PATTERN = /(^|\.)gyazo\.com$/i;
+
+/**
+ * Accept either a bare Gyazo image id (32 hex characters) or any Gyazo URL that
+ * carries one, and return the canonical lowercase id. Returns null otherwise.
+ */
+export function normalizeImageId(input: string): string | null {
+  const trimmed = (input || '').trim();
+  if (!trimmed) return null;
+
+  if (IMAGE_ID_PATTERN.test(trimmed)) {
+    return trimmed.toLowerCase();
+  }
+
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return null;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (!GYAZO_HOST_PATTERN.test(url.hostname)) {
+    return null;
+  }
+
+  const lastSegment = url.pathname.split('/').filter(Boolean).pop();
+  if (!lastSegment) return null;
+  const withoutExtension = lastSegment.replace(/\.[a-z0-9]+$/i, '');
+  return IMAGE_ID_PATTERN.test(withoutExtension) ? withoutExtension.toLowerCase() : null;
+}
+
+function requireImageId(input: string): string {
+  const imageId = normalizeImageId(input);
+  if (!imageId) {
+    console.error(`Error: '${input}' is not a Gyazo image ID or URL.`);
+    console.error('Hint: pass a 32-character image ID or a https://gyazo.com/<id> URL.');
+    process.exit(1);
+  }
+  return imageId;
+}
+
 program
   .name('gyazo')
   .description('Gyazo Memory CLI for AI Secretary')
@@ -2037,6 +2082,8 @@ program
         console.error('Error: --ocr and --objects cannot be used together.');
         process.exit(1);
       }
+
+      imageId = requireImageId(imageId);
 
       let image = options.cache !== false ? loadImageCache(imageId) : null;
       if (!image) {
