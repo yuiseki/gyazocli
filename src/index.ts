@@ -2,7 +2,7 @@
 import { Command } from 'commander';
 import fs from 'fs';
 import path from 'path';
-import { listImages, getImageDetail, searchImages, getCurrentUser, uploadImage } from './api';
+import { listImages, getImageDetail, searchImages, getCurrentUser, uploadImage, getCollection } from './api';
 import {
   saveImageCache,
   loadImageCache,
@@ -15,7 +15,7 @@ import {
   loadHourlyMetadataCache,
   type HourlyMetadataKind,
 } from './storage';
-import { ensureAccessToken, getStoredConfig, setStoredConfig } from './credentials';
+import { ensureAccessToken, resolveAccessToken, getStoredConfig, setStoredConfig } from './credentials';
 
 const program = new Command();
 const UPLOAD_DESC_TAG = '#gyazocli_uploads';
@@ -50,17 +50,96 @@ export function normalizeImageId(input: string): string | null {
     return null;
   }
 
-  const lastSegment = url.pathname.split('/').filter(Boolean).pop();
+  const segments = url.pathname.split('/').filter(Boolean);
+  const lastSegment = segments[segments.length - 1];
   if (!lastSegment) return null;
+  // /collections/<id> is a collection, not an image.
+  if (segments[segments.length - 2] === 'collections') return null;
   const withoutExtension = lastSegment.replace(/\.[a-z0-9]+$/i, '');
   return IMAGE_ID_PATTERN.test(withoutExtension) ? withoutExtension.toLowerCase() : null;
+}
+
+const COLLECTION_SORTS = ['added', 'created', 'captured'] as const;
+type CollectionSort = (typeof COLLECTION_SORTS)[number];
+
+/**
+ * A collection ID looks exactly like an image ID (32 hex characters), so only
+ * the URL form tells the two apart. `/collections/<id>` is a collection;
+ * `/<id>` is an image.
+ */
+export function normalizeCollectionId(input: string): string | null {
+  const trimmed = (input || '').trim();
+  if (!trimmed) return null;
+
+  if (IMAGE_ID_PATTERN.test(trimmed)) {
+    return trimmed.toLowerCase();
+  }
+
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return null;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (!GYAZO_HOST_PATTERN.test(url.hostname)) {
+    return null;
+  }
+
+  const segments = url.pathname.split('/').filter(Boolean);
+  if (segments.length < 2 || segments[segments.length - 2] !== 'collections') {
+    return null;
+  }
+  const withoutExtension = segments[segments.length - 1].replace(/\.[a-z0-9]+$/i, '');
+  return IMAGE_ID_PATTERN.test(withoutExtension) ? withoutExtension.toLowerCase() : null;
+}
+
+function requireCollectionId(input: string): string {
+  const collectionId = normalizeCollectionId(input);
+  if (!collectionId) {
+    console.error(`Error: '${input}' is not a Gyazo collection ID or URL.`);
+    console.error('Hint: pass a 32-character collection ID or a https://gyazo.com/collections/<id> URL.');
+    process.exit(1);
+  }
+  return collectionId;
+}
+
+function parseCollectionSort(value: unknown): CollectionSort {
+  if (value === undefined || value === null) return 'added';
+  if ((COLLECTION_SORTS as readonly string[]).includes(String(value))) {
+    return String(value) as CollectionSort;
+  }
+  console.error(`Error: --sort must be one of ${COLLECTION_SORTS.join(', ')}.`);
+  process.exit(1);
+}
+
+function collectionSortKey(image: any, sort: CollectionSort): string {
+  if (sort === 'captured') {
+    return image?.exif_captured_at || image?.metadata?.exif_normalized?.time || image?.created_at || '';
+  }
+  return image?.created_at || '';
+}
+
+function sortCollectionImages(images: any[], sort: CollectionSort): any[] {
+  if (sort === 'added') return images;
+  // Newest first, matching how `list` presents images.
+  return [...images].sort((a, b) =>
+    collectionSortKey(b, sort).localeCompare(collectionSortKey(a, sort)),
+  );
 }
 
 function requireImageId(input: string): string {
   const imageId = normalizeImageId(input);
   if (!imageId) {
     console.error(`Error: '${input}' is not a Gyazo image ID or URL.`);
-    console.error('Hint: pass a 32-character image ID or a https://gyazo.com/<id> URL.');
+    if (normalizeCollectionId(input)) {
+      console.error(`Hint: that looks like a collection. Try \`gyazo collection ${input}\`.`);
+    } else {
+      console.error('Hint: pass a 32-character image ID or a https://gyazo.com/<id> URL.');
+    }
     process.exit(1);
   }
   return imageId;
@@ -1667,6 +1746,47 @@ async function readStdinBuffer(): Promise<Buffer> {
   });
 }
 
+function printCollectionMarkdown(collection: any, images: any[]): void {
+  const lines: string[] = [];
+  lines.push('## Gyazo Collection');
+  lines.push('');
+
+  const name = normalizeText(collection?.name);
+  if (name) lines.push(`- Name: ${name}`);
+
+  const collectionId = collection?.id;
+  const url = collection?.url || (collectionId ? `https://gyazo.com/collections/${collectionId}` : undefined);
+  if (url) lines.push(`- URL: <${url}>`);
+
+  const description = normalizeText(collection?.description);
+  if (description) lines.push(`- Description: ${description}`);
+
+  const owner = normalizeText(collection?.user?.name);
+  if (owner) lines.push(`- Owner: ${owner}`);
+
+  const total = collection?.total_image_count;
+  const shown = images.length;
+  const truncated = typeof total === 'number' && total > shown;
+  lines.push(`- Images: ${truncated ? `${shown} of ${total}` : shown}`);
+
+  const updatedAt = normalizeText(collection?.list_updated_at);
+  if (updatedAt) lines.push(`- Updated at: ${formatCreatedAt(updatedAt)}`);
+
+  console.log(lines.join('\n'));
+
+  if (truncated) {
+    console.log('');
+    console.log('Note: this endpoint returns only the first 100 images of a collection.');
+  }
+
+  if (shown > 0) {
+    console.log('');
+    console.log('### Images');
+    console.log('');
+    printListImages(images);
+  }
+}
+
 function printGetMarkdown(image: any, ocrDescription?: string, objects: DisplayObjectAnnotation[] = []): void {
   const lines: string[] = [];
   lines.push('## Gyazo Image');
@@ -1710,7 +1830,7 @@ function printGetMarkdown(image: any, ocrDescription?: string, objects: DisplayO
 function summarizeImageForList(img: any): string {
   const domain = extractDomain(normalizeText(img.metadata?.url));
   const cleanedTitle = sanitizeSummaryText(img.metadata?.title, domain);
-  const cleanedDesc = sanitizeSummaryText(img.metadata?.desc, domain);
+  const cleanedDesc = sanitizeSummaryText(img.metadata?.desc ?? img.desc, domain);
   const locationLabel = sanitizeSummaryText(extractImageLocationLabel(img));
   const cleanedAltText = sanitizeSummaryText(img.alt_text);
 
@@ -2126,6 +2246,49 @@ program
       }
     } catch (error: any) {
       console.error('Error getting image:', error.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('collection <collection_id>')
+  .aliases(['col', 'cols', 'collections'])
+  .description('Show a collection and the images in it')
+  .option('-j, --json', 'output as JSON')
+  .option('-A, --anonymous', 'read without an access token, even when one is configured')
+  .option('--sort <added|created|captured>', 'image order (default: added)')
+  .action(async (collectionIdInput, options) => {
+    const collectionId = requireCollectionId(collectionIdInput);
+    const sort = parseCollectionSort(options.sort);
+
+    // No token is not an error here: public collections read fine anonymously.
+    if (!options.anonymous) {
+      resolveAccessToken();
+    }
+
+    try {
+      const collection = await getCollection(collectionId, { anonymous: Boolean(options.anonymous) });
+
+      if (options.json) {
+        console.log(JSON.stringify(collection, null, 2));
+        return;
+      }
+
+      const images = sortCollectionImages(
+        Array.isArray(collection?.images) ? collection.images : [],
+        sort,
+      );
+      printCollectionMarkdown(collection, images);
+    } catch (error: any) {
+      if (error?.response?.status === 404) {
+        console.error(`Error: collection ${collectionId} was not found or not public.`);
+        console.error('Hint: a private collection returns the same 404 as one that does not exist.');
+        if (options.anonymous) {
+          console.error('Hint: you are running with --anonymous. Drop it to use your access token.');
+        }
+        process.exit(1);
+      }
+      console.error('Error getting collection:', error.message);
       process.exit(1);
     }
   });
@@ -2817,7 +2980,11 @@ function expandImplicitCommand(argv: string[]): string[] {
 
   let implicitCommand: string | null = null;
   if (normalizeImageId(first)) {
+    // A bare 32-hex ID is ambiguous; treat it as an image.
     implicitCommand = 'get';
+  } else if (normalizeCollectionId(first)) {
+    // Only the /collections/<id> URL form is unambiguous.
+    implicitCommand = 'collection';
   } else if (fs.existsSync(first) && fs.statSync(first).isFile()) {
     implicitCommand = 'upload';
   }
