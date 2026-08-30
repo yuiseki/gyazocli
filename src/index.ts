@@ -2792,4 +2792,40 @@ program
     }
   });
 
-program.parseAsync(process.argv);
+/**
+ * Let the first argument stand on its own when it is unambiguous:
+ * a Gyazo image ID or URL means `get`, an existing file means `upload`.
+ * Anything else is left to commander so unknown commands still report as such.
+ */
+function expandImplicitCommand(argv: string[]): string[] {
+  const args = argv.slice(2);
+  const first = args[0];
+  if (!first || first.startsWith('-')) {
+    return argv;
+  }
+
+  const knownNames = new Set<string>(['help']);
+  for (const command of program.commands) {
+    knownNames.add(command.name());
+    for (const alias of command.aliases()) {
+      knownNames.add(alias);
+    }
+  }
+  if (knownNames.has(first)) {
+    return argv;
+  }
+
+  let implicitCommand: string | null = null;
+  if (normalizeImageId(first)) {
+    implicitCommand = 'get';
+  } else if (fs.existsSync(first) && fs.statSync(first).isFile()) {
+    implicitCommand = 'upload';
+  }
+  if (!implicitCommand) {
+    return argv;
+  }
+
+  return [...argv.slice(0, 2), implicitCommand, ...args];
+}
+
+program.parseAsync(expandImplicitCommand(process.argv));

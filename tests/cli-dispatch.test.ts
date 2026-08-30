@@ -260,3 +260,82 @@ test('upload --json prints the full upload response', async () => {
   }
 });
 
+// --- implicit dispatch of the first argument --------------------------------------
+
+test('a bare image id is dispatched to get', async () => {
+  const cacheDir = createTempCacheDir();
+  const imageId = '49a008e2f254f513063b6ec4d3082944';
+  writeImageCache(cacheDir, imageId, sampleImage(imageId));
+
+  const implicit = await runCli(cacheDir, [imageId]);
+  const explicit = await runCli(cacheDir, ['get', imageId]);
+  expect(implicit.status).toBe(0);
+  expect(implicit.stdout).toBe(explicit.stdout);
+});
+
+test('a bare permalink URL is dispatched to get', async () => {
+  const cacheDir = createTempCacheDir();
+  const imageId = '49a008e2f254f513063b6ec4d3082945';
+  writeImageCache(cacheDir, imageId, sampleImage(imageId));
+
+  const result = await runCli(cacheDir, [`https://gyazo.com/${imageId}`]);
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain(`- URL: <https://gyazo.com/${imageId}>`);
+});
+
+test('implicit get still honours option flags', async () => {
+  const cacheDir = createTempCacheDir();
+  const imageId = '49a008e2f254f513063b6ec4d3082946';
+  writeImageCache(cacheDir, imageId, sampleImage(imageId));
+
+  const result = await runCli(cacheDir, [imageId, '--json']);
+  expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout).image_id).toBe(imageId);
+});
+
+test('an existing file path is dispatched to upload', async () => {
+  const cacheDir = createTempCacheDir();
+  const imagePath = writeTempImage(cacheDir);
+  const stub = await startStubServer(uploadStubHandler());
+  try {
+    const result = await runCli(cacheDir, [imagePath], { uploadOrigin: stub.origin });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(`https://gyazo.com/${UPLOADED_ID}\n`);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('implicit upload still honours option flags', async () => {
+  const cacheDir = createTempCacheDir();
+  const imagePath = writeTempImage(cacheDir);
+  const stub = await startStubServer(uploadStubHandler());
+  try {
+    const result = await runCli(cacheDir, [imagePath, '--json'], { uploadOrigin: stub.origin });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).image_id).toBe(UPLOADED_ID);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a known subcommand name is never treated as a path or id', async () => {
+  const cacheDir = createTempCacheDir();
+  const result = await runCli(cacheDir, ['search']);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toMatch(/Query is required/);
+});
+
+test('an unrecognisable first argument still reports unknown command', async () => {
+  const cacheDir = createTempCacheDir();
+  const result = await runCli(cacheDir, ['definitely-not-a-command']);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toMatch(/unknown command/);
+});
+
+test('help is unaffected by implicit dispatch', async () => {
+  const cacheDir = createTempCacheDir();
+  const result = await runCli(cacheDir, ['--help']);
+  expect(result.status).toBe(0);
+  expect(result.stdout).toMatch(/Usage: gyazo/);
+});
