@@ -3,6 +3,11 @@ name: Release
 # Publishing happens here rather than from a laptop, so what reaches npm is
 # always the contents of a tag that passed its tests. Authentication is npm
 # trusted publishing (OIDC): there is no token stored in this repository.
+#
+# This job only stages the release. The trusted publisher is configured for
+# `npm stage publish` alone, so nothing becomes public until a maintainer
+# approves the staged version with 2FA, from the Staged Packages tab on
+# npmjs.com or with `npm stage approve <stage-id>`.
 on:
   push:
     tags: ['v*']
@@ -30,7 +35,7 @@ jobs:
           node-version: '24.x'
           cache: npm
 
-      # Trusted publishing needs npm 11.5.1 or newer.
+      # Trusted publishing needs npm 11.5.1 or newer, staged publishing 11.15.0.
       - name: Update npm
         run: |
           npm install -g npm@latest
@@ -50,5 +55,12 @@ jobs:
       - run: npm run build
       - run: npx vitest run
 
-      - name: Publish
-        run: npm publish
+      - name: Stage the release for approval
+        run: npm stage publish
+
+      - name: How to finish the release
+        run: |
+          echo "Staged. Approve it to publish:"
+          echo "  npm stage list @yuiseki/gyazocli"
+          echo "  npm stage approve <stage-id>"
+          echo "or use the Staged Packages tab on npmjs.com. Both ask for 2FA."
