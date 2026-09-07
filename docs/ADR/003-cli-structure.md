@@ -11,7 +11,7 @@ Adopt and document the existing top-level command structure.
 
 ### 1. Program Metadata
 - Binary name: `gyazo`
-- Version: `0.0.2`
+- Version: `0.1.0`
 - Description: `Gyazo Memory CLI for AI Secretary`
 
 ### 2. Commands

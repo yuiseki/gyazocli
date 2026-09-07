@@ -636,3 +636,11 @@ test('upload rejects future timestamp before API call', () => {
   expect(result.status).toBe(1);
   expect(result.stderr).toMatch(/--timestamp must be current time or in the past/);
 });
+
+test('--version matches the version in package.json', () => {
+  const cacheDir = createTempCacheDir();
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
+  const result = runCli(cacheDir, ['--version']);
+  expect(result.status).toBe(0);
+  expect(result.stdout.trim()).toBe(pkg.version);
+});
