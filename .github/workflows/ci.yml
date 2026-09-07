@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20.x', '22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx vitest run
+
+  package:
+    name: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+          cache: npm
+      - run: npm ci
+      - name: Pack the published tarball
+        run: npm pack --pack-destination /tmp/pack
+
+      # Installed without hoisting, so the CLI can only resolve the
+      # dependencies it declares itself. A module that happens to be pulled in
+      # by axios or vitest today is not available here.
+      - name: Install the tarball with no hoisting
+        run: |
+          mkdir -p /tmp/smoke
+          cd /tmp/smoke
+          npm init -y
+          npm install --omit=dev --install-strategy=nested /tmp/pack/*.tgz
+
+      - name: The packed CLI runs on its declared dependencies alone
+        run: |
+          cd /tmp/smoke
+          ./node_modules/.bin/gyazo --help
