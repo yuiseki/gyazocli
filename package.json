@@ -1,7 +1,15 @@
 {
   "name": "@yuiseki/gyazocli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Gyazo Memory CLI for AI Secretary",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuiseki/gyazocli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yuiseki/gyazocli/issues"
+  },
+  "homepage": "https://github.com/yuiseki/gyazocli#readme",
   "main": "dist/index.js",
   "bin": {
     "gyazo": "dist/index.js"

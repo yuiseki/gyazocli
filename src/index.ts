@@ -148,7 +148,7 @@ function requireImageId(input: string): string {
 program
   .name('gyazo')
   .description('Gyazo Memory CLI for AI Secretary')
-  .version('0.1.0');
+  .version('0.1.1');
 
 // Config Command
 const configCmd = program.command('config').description('Manage configuration');
