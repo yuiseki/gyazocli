@@ -20,6 +20,40 @@ function ymdFromDate(date: Date): string {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+/**
+ * An ISO timestamp carrying this machine's own UTC offset. `--date` selects a
+ * day in local time, so a fixture written as a fixed offset only lands on the
+ * intended day in the zone it was written in.
+ */
+function localIsoFromDate(date: Date): string {
+  const parts = ymdPartsFromDate(date);
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  const second = String(date.getSeconds()).padStart(2, '0');
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes < 0 ? '-' : '+';
+  const offsetHour = String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, '0');
+  const offsetMinute = String(Math.abs(offsetMinutes) % 60).padStart(2, '0');
+  return `${parts.year}-${parts.month}-${parts.day}T${hour}:${minute}:${second}${sign}${offsetHour}:${offsetMinute}`;
+}
+
+function writeImageAtLocalTime(
+  cacheDir: string,
+  imageId: string,
+  at: Date,
+  title: string,
+): void {
+  const parts = ymdPartsFromDate(at);
+  const hour = String(at.getHours()).padStart(2, '0');
+  writeHourlyIndex(cacheDir, parts.year, parts.month, parts.day, hour, [imageId]);
+  writeImageCache(cacheDir, imageId, {
+    image_id: imageId,
+    permalink_url: `https://gyazo.com/${imageId}`,
+    created_at: localIsoFromDate(at),
+    metadata: { title },
+  });
+}
+
 function getDefaultWeeklyRangeLabels(): {
   start: Date;
   end: Date;
@@ -535,37 +569,24 @@ test('list --date reads date-range cache and supports pagination', () => {
   const id2 = 'dt000000000000000000000000000002';
   const id3 = 'dt000000000000000000000000000003';
 
-  writeHourlyIndex(cacheDir, '2026', '02', '20', '02', [id1]);
-  writeImageCache(cacheDir, id1, {
-    image_id: id1,
-    permalink_url: `https://gyazo.com/${id1}`,
-    created_at: '2026-02-20T02:34:56+09:00',
-    metadata: { title: 'day-target-early' },
-  });
+  // Local time throughout, because that is what --date selects: two images on
+  // the target day and one just past its end.
+  const early = new Date(2026, 1, 20, 2, 34, 56);
+  const late = new Date(2026, 1, 20, 11, 34, 56);
+  const outside = new Date(2026, 1, 21, 1, 0, 0);
+  const targetDay = ymdFromDate(early);
 
-  writeHourlyIndex(cacheDir, '2026', '02', '20', '11', [id2]);
-  writeImageCache(cacheDir, id2, {
-    image_id: id2,
-    permalink_url: `https://gyazo.com/${id2}`,
-    created_at: '2026-02-20T11:34:56+09:00',
-    metadata: { title: 'day-target-late' },
-  });
+  writeImageAtLocalTime(cacheDir, id1, early, 'day-target-early');
+  writeImageAtLocalTime(cacheDir, id2, late, 'day-target-late');
+  writeImageAtLocalTime(cacheDir, id3, outside, 'outside-day');
 
-  writeHourlyIndex(cacheDir, '2026', '02', '21', '01', [id3]);
-  writeImageCache(cacheDir, id3, {
-    image_id: id3,
-    permalink_url: `https://gyazo.com/${id3}`,
-    created_at: '2026-02-21T01:00:00+09:00',
-    metadata: { title: 'outside-day' },
-  });
-
-  const page1 = runCli(cacheDir, ['ls', '--date', '2026-02-20', '--json', '--limit', '1', '--page', '1']);
+  const page1 = runCli(cacheDir, ['ls', '--date', targetDay, '--json', '--limit', '1', '--page', '1']);
   expect(page1.status).toBe(0);
   const json1 = JSON.parse(page1.stdout);
   expect(json1).toHaveLength(1);
   expect(json1[0].image_id).toBe(id2);
 
-  const page2 = runCli(cacheDir, ['ls', '--date', '2026-02-20', '--json', '--limit', '1', '--page', '2']);
+  const page2 = runCli(cacheDir, ['ls', '--date', targetDay, '--json', '--limit', '1', '--page', '2']);
   expect(page2.status).toBe(0);
   const json2 = JSON.parse(page2.stdout);
   expect(json2).toHaveLength(1);

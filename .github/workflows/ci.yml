@@ -37,7 +37,9 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Pack the published tarball
-        run: npm pack --pack-destination /tmp/pack
+        run: |
+          mkdir -p /tmp/pack
+          npm pack --pack-destination /tmp/pack
 
       # Installed without hoisting, so the CLI can only resolve the
       # dependencies it declares itself. A module that happens to be pulled in
