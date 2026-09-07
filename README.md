@@ -101,6 +101,11 @@ npm run build
 npm test
 ```
 
+### Release
+
+Push a `v*` tag and Actions stages the package on npm, where a maintainer
+approves it with 2FA. See [RELEASE.md](RELEASE.md).
+
 ### Link local CLI with npm link
 
 ```bash
