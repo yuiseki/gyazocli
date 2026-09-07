@@ -1,0 +1,54 @@
+name: Release
+
+# Publishing happens here rather than from a laptop, so what reaches npm is
+# always the contents of a tag that passed its tests. Authentication is npm
+# trusted publishing (OIDC): there is no token stored in this repository.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish, for example v0.1.0'
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
+          cache: npm
+
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - name: Update npm
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      - name: The tag must match the version in package.json
+        run: |
+          tag='${{ inputs.tag || github.ref_name }}'
+          version="v$(node -p "require('./package.json').version")"
+          echo "tag=${tag} package.json=${version}"
+          if [ "${tag}" != "${version}" ]; then
+            echo "Refusing to publish: the tag and package.json disagree." >&2
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run build
+      - run: npx vitest run
+
+      - name: Publish
+        run: npm publish
