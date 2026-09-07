@@ -55,3 +55,17 @@ jobs:
         run: |
           cd /tmp/smoke
           ./node_modules/.bin/gyazo --help
+
+      # The MCP server pulls in the largest dependency the CLI has, and it is
+      # only reached through --mcp-server, so --help alone would not notice a
+      # missing one.
+      - name: The MCP server answers a handshake under that install
+        run: |
+          cd /tmp/smoke
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+            | GYAZO_ACCESS_TOKEN=dummy timeout 30 ./node_modules/.bin/gyazo --mcp-server > handshake.jsonl
+          cat handshake.jsonl
+          grep -q '"name":"gyazocli"' handshake.jsonl
+          grep -q '"gyazo_search"' handshake.jsonl

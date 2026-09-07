@@ -86,6 +86,46 @@ Environment variables:
 - `GYAZO_CACHE_DIR`: cache location
 - `GYAZO_API_ORIGIN` / `GYAZO_UPLOAD_ORIGIN` / `GYAZO_WEB_ORIGIN`: override the endpoints (used by the test suite)
 
+## MCP server
+
+`gyazo --mcp-server` runs the CLI as a Model Context Protocol server over
+stdio, so an MCP client can search your captures. `--mcp`, `mcp-server` and
+`mcp` start the same thing.
+
+```bash
+gyazo --mcp-server
+```
+
+It needs an access token before it starts, from `gyazo config set token` or
+from `GYAZO_ACCESS_TOKEN` in the client's environment. stdout carries only
+JSON-RPC; anything meant for a human goes to stderr.
+
+Configured in a client:
+
+```json
+{
+  "mcpServers": {
+    "gyazo": {
+      "command": "npx",
+      "args": ["-y", "@yuiseki/gyazocli", "--mcp-server"],
+      "env": { "GYAZO_ACCESS_TOKEN": "your_access_token" }
+    }
+  }
+}
+```
+
+### Tools
+
+- `gyazo_search`: full-text search over your captures. Arguments: `query`
+  (required, up to 200 characters), `page` (default 1), `per` (default 20,
+  max 100). Search syntax is the same as Gyazo's: `cat`, `title:cat`,
+  `app:"Google Chrome"`, `url:google.com`, `cat since:2024-01-01 until:2024-12-31`.
+
+The tool name and its arguments follow
+[nota/gyazo-mcp-server](https://github.com/nota/gyazo-mcp-server), so a client
+already configured against that server can point at this one instead. Only
+`gyazo_search` is implemented so far.
+
 ## Development
 
 ### Build

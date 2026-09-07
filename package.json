@@ -36,6 +36,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "axios": "^1.13.5",
     "commander": "^14.0.3",
     "dotenv": "^17.3.1",
