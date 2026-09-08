@@ -927,6 +927,151 @@ test('the OCR text comes through from wherever the response carries it', async (
   }
 });
 
+// --- normalized location ----------------------------------------------------
+
+/** Shaped like a real phone photo, addresses and raw EXIF included. */
+const PHONE_PHOTO = {
+  image_id: 'cc000000000000000000000000000001',
+  permalink_url: 'https://gyazo.com/cc000000000000000000000000000001',
+  url: 'https://i.gyazo.com/cc000000000000000000000000000001.jpg',
+  thumb_url: 'https://thumb.gyazo.com/thumb/200/token.jpg',
+  type: 'jpg',
+  created_at: '2026-08-30T10:06:11.000Z',
+  exif_captured_at: '2026-08-30T10:06:11.000Z',
+  metadata: {
+    app: 'Gyazo Android',
+    ocr: { locale: 'und', description: 'お好み焼\nもり' },
+    exif_normalized: {
+      timezone: 'utc',
+      latitude: 34.38617222222222,
+      longitude: 132.45966944444444,
+      time: '2026-08-30T10:06:11.000Z',
+    },
+    exif: {
+      Altitude: '36.29',
+      'Altitude Reference': 'Sea level',
+      'GPS Image Direction': '18',
+      'GPS Image Direction Reference': 'M',
+      'Offset Time For DateTimeOriginal': '+09:00',
+    },
+    exif_address: {
+      ja: {
+        address: '日本、〒730-0043 広島県広島市中区富士見町１４−１１',
+        address_components: [
+          { long_name: '広島市', short_name: '広島市', types: ['locality', 'political'] },
+          {
+            long_name: '広島県',
+            short_name: '広島県',
+            types: ['administrative_area_level_1', 'political'],
+          },
+          { long_name: '日本', short_name: 'JP', types: ['country', 'political'] },
+        ],
+      },
+      en: {
+        address: '14-11 Fujimichō, Naka Ward, Hiroshima, 730-0043, Japan',
+        address_components: [
+          { long_name: 'Hiroshima', short_name: 'Hiroshima', types: ['locality', 'political'] },
+          {
+            long_name: 'Hiroshima',
+            short_name: 'Hiroshima',
+            types: ['administrative_area_level_1', 'political'],
+          },
+          { long_name: 'Japan', short_name: 'JP', types: ['country', 'political'] },
+        ],
+      },
+      de: { address: 'irrelevant', address_components: [] },
+    },
+  },
+};
+
+test('a photo carries a normalized location, in both languages', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(imageStub(PHONE_PHOTO, []));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_image',
+      arguments: { id_or_url: PHONE_PHOTO.image_id },
+    });
+    const image = JSON.parse(response.result.content[0].text);
+
+    expect(image.location.latitude).toBeCloseTo(34.386172, 5);
+    expect(image.location.longitude).toBeCloseTo(132.459669, 5);
+    expect(image.location.country_code).toBe('JP');
+    // Both languages, because a Japanese address reads poorly abroad and an
+    // English one reads poorly at home.
+    expect(image.location.address.ja.text).toContain('広島県広島市');
+    expect(image.location.address.ja.locality).toBe('広島市');
+    expect(image.location.address.ja.admin1).toBe('広島県');
+    expect(image.location.address.en.text).toContain('Hiroshima');
+    expect(image.location.address.en.locality).toBe('Hiroshima');
+    // Only the two languages a model here can use.
+    expect(Object.keys(image.location.address).sort()).toEqual(['en', 'ja']);
+
+    expect(image.location.altitude_m).toBe(36.29);
+    expect(image.location.heading_deg).toBe(18);
+    expect(image.location.heading_reference).toBe('magnetic');
+
+    expect(image.captured_at).toBe('2026-08-30T10:06:11.000Z');
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('altitude and heading are absent when the response has no raw EXIF', async () => {
+  const cacheDir = createTempCacheDir();
+  // What /api/images/<id> actually returns: no metadata.exif at all.
+  const noRawExif = {
+    ...PHONE_PHOTO,
+    metadata: { ...PHONE_PHOTO.metadata, exif: undefined },
+  };
+  const stub = await startStubServer(imageStub(noRawExif, []));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_image',
+      arguments: { id_or_url: PHONE_PHOTO.image_id },
+    });
+    const image = JSON.parse(response.result.content[0].text);
+    expect(image.location.latitude).toBeCloseTo(34.386172, 5);
+    expect('altitude_m' in image.location).toBe(false);
+    expect('heading_deg' in image.location).toBe(false);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('a capture with no address gets coordinates and nothing invented', async () => {
+  const cacheDir = createTempCacheDir();
+  const noAddress = {
+    ...PHONE_PHOTO,
+    exif_captured_at: undefined,
+    metadata: {
+      app: 'Gyazo Android',
+      exif_normalized: { timezone: 'utc', latitude: 1.5, longitude: 2.5 },
+    },
+  };
+  const stub = await startStubServer(imageStub(noAddress, []));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_image',
+      arguments: { id_or_url: PHONE_PHOTO.image_id },
+    });
+    const image = JSON.parse(response.result.content[0].text);
+    expect(image.location).toEqual({ latitude: 1.5, longitude: 2.5 });
+    expect('captured_at' in image).toBe(false);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
 // --- differential retrieval -------------------------------------------------
 
 /** Newest first, as the API returns them, one minute apart. */

@@ -63,6 +63,27 @@ export function getAddressEntry(exifAddress: any, locale: string): any | undefin
   return entry;
 }
 
+/**
+ * The short form of a component, which is what a country code is: `JP` rather
+ * than `日本` or `Japan`, and the same in every language.
+ */
+export function getAddressComponentCode(addressEntry: any, type: string): string | undefined {
+  if (!addressEntry || typeof addressEntry !== 'object') return undefined;
+  const components = Array.isArray(addressEntry.address_components)
+    ? addressEntry.address_components
+    : [];
+
+  for (const component of components) {
+    if (!component || typeof component !== 'object') continue;
+    const types = Array.isArray(component.types) ? component.types : [];
+    if (!types.includes(type)) continue;
+    const value = normalizeText(component.short_name);
+    if (value) return value;
+  }
+
+  return undefined;
+}
+
 export function getAddressComponent(addressEntry: any, type: string): string | undefined {
   if (!addressEntry || typeof addressEntry !== 'object') return undefined;
   const components = Array.isArray(addressEntry.address_components)

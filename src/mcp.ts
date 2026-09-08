@@ -22,6 +22,12 @@ import {
   tryParseDateOption,
   type ParsedDateOption,
 } from './dates';
+import {
+  getAddressComponent,
+  getAddressComponentCode,
+  getAddressEntry,
+  normalizeText,
+} from './format';
 import { listCaptures, listCapturesSince, type CaptureAlias } from './services/memory';
 import { buildSummary, toSummaryJson } from './services/analytics';
 import { COLLECTION_SORTS, readCollection, type CollectionSort } from './services/collections';
@@ -72,19 +78,84 @@ function present<T>(value: T | null | undefined): value is T {
 }
 
 /**
- * Where a capture was taken. This lives under `metadata`, and the top-level
- * `exif_normalized` is null in every response this CLI reads, which is why
- * coordinates were missing from all of the tool output until now. The
- * top-level shape is still read, in case an endpoint starts filling it.
+ * Both languages, always. A Japanese address reads poorly for a place abroad,
+ * and an English one reads poorly at home, and which of those applies is not
+ * something this server can decide for the model.
  */
-function readLocation(image: ImageWithLocation): { latitude: number; longitude: number } | undefined {
+const ADDRESS_LOCALES = ['ja', 'en'] as const;
+
+function readNumber(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function readAddresses(exifAddress: unknown) {
+  const addresses: Record<string, { text: string; locality?: string; admin1?: string }> = {};
+  for (const locale of ADDRESS_LOCALES) {
+    const entry = getAddressEntry(exifAddress, locale);
+    const text = normalizeText(entry?.address);
+    if (!text) continue;
+    const locality = getAddressComponent(entry, 'locality');
+    const admin1 = getAddressComponent(entry, 'administrative_area_level_1');
+    addresses[locale] = {
+      text,
+      ...(locality ? { locality } : {}),
+      ...(admin1 ? { admin1 } : {}),
+    };
+  }
+  return Object.keys(addresses).length > 0 ? addresses : undefined;
+}
+
+/**
+ * Where a capture was taken, in the fields a model can reason about.
+ *
+ * The coordinates live under `metadata`; the top-level `exif_normalized` is
+ * null in every response this CLI reads, though it is still honoured in case
+ * an endpoint starts filling it. Altitude and heading only exist in the raw
+ * EXIF, which `/api/images/<id>` does not return, so they appear for captures
+ * read through a collection and are absent otherwise rather than guessed.
+ */
+function readLocation(image: ImageWithLocation) {
   const source = image?.metadata?.exif_normalized ?? image?.exif_normalized;
   const latitude = source?.latitude;
   const longitude = source?.longitude;
   if (typeof latitude !== 'number' || typeof longitude !== 'number') {
     return undefined;
   }
-  return { latitude, longitude };
+
+  const exif = (image?.metadata as any)?.exif;
+  const altitude = readNumber(exif?.['Altitude']);
+  const heading = readNumber(exif?.['GPS Image Direction']);
+  const headingReferenceCode = normalizeText(exif?.['GPS Image Direction Reference']);
+  const headingReference =
+    headingReferenceCode === 'M' ? 'magnetic' : headingReferenceCode === 'T' ? 'true' : undefined;
+
+  const exifAddress = (image?.metadata as any)?.exif_address;
+  const addresses = readAddresses(exifAddress);
+  const countryCode = ADDRESS_LOCALES.map((locale) =>
+    getAddressComponentCode(getAddressEntry(exifAddress, locale), 'country'),
+  ).find(present);
+
+  return {
+    latitude,
+    longitude,
+    ...(altitude !== undefined ? { altitude_m: altitude } : {}),
+    ...(heading !== undefined ? { heading_deg: heading } : {}),
+    ...(heading !== undefined && headingReference ? { heading_reference: headingReference } : {}),
+    ...(countryCode ? { country_code: countryCode } : {}),
+    ...(addresses ? { address: addresses } : {}),
+  };
+}
+
+/** When the shutter was pressed, as opposed to when the capture was uploaded. */
+function readCapturedAt(image: ImageWithLocation): string | undefined {
+  const capturedAt =
+    (image as any)?.exif_captured_at ?? image?.metadata?.exif_normalized?.time ?? undefined;
+  return present(capturedAt) && typeof capturedAt === 'string' ? capturedAt : undefined;
 }
 
 /**
@@ -99,6 +170,7 @@ function readOcr(image: ImageWithLocation) {
 
 function toMetadata(image: ImageWithLocation) {
   const location = readLocation(image);
+  const capturedAt = readCapturedAt(image);
   const ocr = readOcr(image);
   return {
     image_id: image.image_id,
@@ -107,6 +179,7 @@ function toMetadata(image: ImageWithLocation) {
     ...(present(image.thumb_url) ? { thumb_url: image.thumb_url } : {}),
     ...(present(image.type) ? { mimeType: `image/${image.type}` } : {}),
     created_at: image.created_at,
+    ...(capturedAt !== undefined ? { captured_at: capturedAt } : {}),
     ...(present(image.alt_text) && image.alt_text !== '' ? { alt_text: image.alt_text } : {}),
     ...(ocr !== undefined ? { ocr } : {}),
     ...(location !== undefined ? { location } : {}),
