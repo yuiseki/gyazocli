@@ -74,7 +74,13 @@ exiting ones are now thin wrappers over them.
 
 - The result payload is the fields a model can act on: `image_id`,
   `permalink_url`, `url`, `thumb_url`, `mimeType`, `created_at`, `alt_text`,
-  `ocr`, `metadata`, `exif_normalized`. Absent fields stay absent.
+  `ocr`, `location`, `metadata`. Absent fields stay absent, and a null field
+  counts as absent.
+- `location` and `ocr` are read from under `metadata`, which is where Gyazo
+  puts them. The top-level `exif_normalized` and `ocr` are null in every
+  response this CLI receives, and reading those was why coordinates never
+  appeared in any payload. Fixtures written from the shape the code expected
+  hid it; they now come from real responses.
 - No `uri` field, unlike upstream: it points at an MCP resource, and this
   server does not serve resources yet.
 - `gyazo_latest_image` takes no arguments, while upstream declared a `name`

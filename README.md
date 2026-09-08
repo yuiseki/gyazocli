@@ -135,7 +135,8 @@ Configured in a client:
   `id_or_url` (required) and `sort` (`added`, `created` or `captured`).
 
 All of them are read-only, and all of them return metadata rather than image
-bytes: URLs, timestamp, OCR text, title, source application and page, and
+bytes. A capture that carries coordinates gets a `location: {latitude,
+longitude}`, and OCR text is reported wherever the response carries it: URLs, timestamp, OCR text, title, source application and page, and
 location when the capture carries one. Use the URLs in a result to show the
 capture itself. Handing base64 image data to a model turned out not to work
 well in practice, and describing a capture does.
