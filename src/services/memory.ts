@@ -8,7 +8,7 @@
  * the IDs captured in that hour plus the metadata the rankings count, so a
  * ranking does not have to open every image to answer.
  */
-import { listImages, getImageDetail, searchImages } from '../api';
+import { listImages, getImageDetail } from '../api';
 import {
   saveImageCache,
   loadImageCache,

@@ -5,7 +5,7 @@
  * edits collections.
  */
 import { normalizeCollectionId } from '../ids';
-import { formatCreatedAt, formatTerminalLink, normalizeText } from '../format';
+import { formatCreatedAt, normalizeText } from '../format';
 import { printListImages } from './images';
 
 export const COLLECTION_SORTS = ['added', 'created', 'captured'] as const;

@@ -9,82 +9,31 @@ import {
   getCacheDir,
   saveHourlyCache,
   loadHourlyCache,
-  saveSearchImageCache,
-  loadSearchImageCache,
-  saveHourlyMetadataCache,
-  loadHourlyMetadataCache,
-  type HourlyMetadataKind,
 } from './storage';
 import { ensureAccessToken, resolveAccessToken, getStoredConfig, setStoredConfig } from './credentials';
 import { normalizeImageId, normalizeCollectionId } from './ids';
 import {
   normalizeText,
-  extractDomain,
-  isXDomain,
-  cleanTextForDomain,
-  stripInlineUrls,
-  sanitizeSummaryText,
-  getAddressEntry,
-  getAddressComponent,
-  buildJaLocationLabel,
-  buildEnLocationLabel,
-  extractImageAddressText,
-  extractImageLocationLabel,
-  truncateText,
-  formatCreatedAt,
-  shortenImageId,
-  formatTerminalLink,
-  normalizeOcrText,
   extractOcrDescription,
-  buildOcrPreview,
-  DisplayObjectAnnotation,
   extractObjectAnnotations,
   formatObjectAnnotationLine,
-  extractImageApps,
-  extractImageDomains,
-  extractImageLocations,
-  normalizeTagText,
-  extractTagFromLinkValue,
-  extractImageTags,
-  normalizeRankingValues,
-  mergeImageForDisplay,
-  shouldEnrichForLocationDisplay,
 } from './format';
 import {
-  WEEKDAY_LABELS,
-  isToday,
-  ParsedDateOption,
   parseDateOption,
-  formatDateYmd,
-  buildRecentWeekRangeUntilYesterday,
   resolveRankingRangeOption,
   buildStatsDateRange,
-  getDateHourStrings,
-  buildHourlyBucketKey,
-  splitHourlyBucketKey,
-  toDateParts,
-  getDatePartsInRange,
   parseUploadTimestamp,
 } from './dates';
+import { parsePositiveIntegerOption } from './options';
 import {
-  parsePositiveIntegerOption,
-} from './options';
-import {
-  MetadataValueExtractor,
-  HourlyMetadataCacheEntries,
   loadImageIdsFromDateRangeCache,
-  normalizeHourlyMetadataEntries,
   warmDateCacheForApps,
   warmDateCacheForDomains,
   warmDateCacheForTags,
   warmDateCacheForLocations,
   warmDateCacheForList,
-  warmDateCacheForRanking,
-  buildHourlyMetadataEntriesFromImageCache,
-  loadOrBuildHourlyMetadataEntries,
   cacheSearchResultImages,
   supplementAltTextFromSearchCache,
-  supplementAltTextForDisplay,
 } from './services/memory';
 import {
   AppRank,
@@ -93,10 +42,7 @@ import {
   TagRank,
   TagRankingSummary,
   UploadTimeSummary,
-  DailyUploadCount,
   DailySummary,
-  RankingFromHourlySummary,
-  aggregateRankingFromHourlyMetadataCache,
   buildAppsRankingFromCache,
   buildAppsRankingFromHourlyCache,
   buildDomainsRankingFromCache,
@@ -107,28 +53,21 @@ import {
   buildTagsRankingFromHourlyCache,
   buildUploadTimeSummaryFromHourlyCache,
   buildUploadTimeSummaryFromImageCache,
-  buildDailyUploadCountsFromHourlyCache,
-  buildDailyUploadCountsFromImageCache,
   buildDailySummariesFromImageCache,
-  appendStatsRankSection,
   renderStatsMarkdown,
   renderSummaryText,
 } from './services/analytics';
 import {
   requireImageId,
   printGetMarkdown,
-  summarizeImageForList,
-  DisplayPreparationOptions,
   prepareImagesForDisplay,
-  enrichImagesForLocationDisplay,
   printListImages,
+  ensureUploadDescTag,
+  readStdinBuffer,
 } from './services/images';
 import {
-  COLLECTION_SORTS,
-  CollectionSort,
   requireCollectionId,
   parseCollectionSort,
-  collectionSortKey,
   sortCollectionImages,
   printCollectionMarkdown,
 } from './services/collections';
@@ -137,7 +76,6 @@ import {
 export { normalizeImageId, normalizeCollectionId };
 
 const program = new Command();
-const UPLOAD_DESC_TAG = '#gyazocli_uploads';
 
 
 program
@@ -201,28 +139,8 @@ configCmd
   });
 
 
-function ensureUploadDescTag(desc?: string): string {
-  const normalized = normalizeText(desc);
-  if (!normalized) return UPLOAD_DESC_TAG;
-
-  const words = normalized
-    .split(' ')
-    .filter(word => word.toLowerCase() !== UPLOAD_DESC_TAG.toLowerCase());
-  words.push(UPLOAD_DESC_TAG);
-  return words.join(' ').trim();
-}
 
 
-async function readStdinBuffer(): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    process.stdin.on('data', (chunk: Buffer | string) => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    });
-    process.stdin.on('end', () => resolve(Buffer.concat(chunks)));
-    process.stdin.on('error', reject);
-  });
-}
 
 
 program

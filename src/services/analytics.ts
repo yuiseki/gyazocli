@@ -12,23 +12,15 @@ import {
   type ParsedDateOption,
   WEEKDAY_LABELS,
   formatDateYmd,
-  splitHourlyBucketKey,
   getDatePartsInRange,
   getDateHourStrings,
-  toDateParts,
 } from '../dates';
 import {
   normalizeText,
-  normalizeRankingValues,
-  extractDomain,
   extractImageApps,
   extractImageDomains,
   extractImageLocations,
   extractImageTags,
-  extractImageLocationLabel,
-  extractOcrDescription,
-  sanitizeSummaryText,
-  truncateText,
 } from '../format';
 import { loadOrBuildHourlyMetadataEntries, type MetadataValueExtractor } from './memory';
 

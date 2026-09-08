@@ -10,16 +10,12 @@ import { normalizeImageId, normalizeCollectionId } from '../ids';
 import {
   type DisplayObjectAnnotation,
   buildOcrPreview,
-  extractObjectAnnotations,
-  extractOcrDescription,
   extractImageAddressText,
   extractImageLocationLabel,
   formatCreatedAt,
   formatObjectAnnotationLine,
   formatTerminalLink,
   extractDomain,
-  cleanTextForDomain,
-  isXDomain,
   mergeImageForDisplay,
   normalizeText,
   sanitizeSummaryText,
@@ -191,5 +187,29 @@ export function printListImages(images: any[]): void {
     const imageUrl = img.permalink_url || `https://gyazo.com/${img.image_id}`;
     const linkedId = formatTerminalLink(shortId, imageUrl);
     console.log(`- [${created}] ${summary} (id: ${linkedId})`);
+  });
+}
+
+export const UPLOAD_DESC_TAG = '#gyazocli_uploads';
+
+export function ensureUploadDescTag(desc?: string): string {
+  const normalized = normalizeText(desc);
+  if (!normalized) return UPLOAD_DESC_TAG;
+
+  const words = normalized
+    .split(' ')
+    .filter(word => word.toLowerCase() !== UPLOAD_DESC_TAG.toLowerCase());
+  words.push(UPLOAD_DESC_TAG);
+  return words.join(' ').trim();
+}
+
+export async function readStdinBuffer(): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    process.stdin.on('data', (chunk: Buffer | string) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    process.stdin.on('end', () => resolve(Buffer.concat(chunks)));
+    process.stdin.on('error', reject);
   });
 }
