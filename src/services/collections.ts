@@ -4,7 +4,14 @@
  * stricter than the one for images. Read-only: this CLI neither creates nor
  * edits collections.
  */
-import { getCollection } from '../api';
+import {
+  getCollection,
+  getCollectionDetail,
+  listCollectionImages,
+  listCollections,
+  type GyazoCollectionSummary,
+} from '../api';
+import { resolveAccessToken } from '../credentials';
 import { normalizeCollectionId } from '../ids';
 import { formatCreatedAt, normalizeText } from '../format';
 import { printListImages } from './images';
@@ -89,19 +96,100 @@ export function printCollectionMarkdown(collection: any, images: any[]): void {
 }
 
 /**
- * A collection and its images in the requested order. The API returns the
- * images in the order they were added, which is the default here too.
+ * A collection and its images in the requested order.
+ *
+ * Two ways in. The public web endpoint needs no token but returns the first
+ * 100 images and ignores every paging parameter, so a larger collection is
+ * simply cut off. The API endpoint needs a token and really pages. Which one
+ * was used, and whether anything was left behind, comes back with the result,
+ * because a collection that stops at 100 without saying so is the kind of
+ * silence that reads as an answer.
  */
+export interface ReadCollectionOptions {
+  anonymous?: boolean;
+  sort?: CollectionSort;
+  /**
+   * Ask for a page through the API endpoint. Left off, the public web endpoint
+   * is used, which is what `gyazo collection` has always done and what an
+   * anonymous read has to do.
+   */
+  paginated?: boolean;
+  page?: number;
+  per?: number;
+}
+
+export interface ReadCollectionResult {
+  collection: any;
+  images: any[];
+  page: number;
+  per: number;
+  returnedImageCount: number;
+  totalImageCount?: number;
+  truncated: boolean;
+  source: 'api' | 'web';
+}
+
 export async function readCollection(
   collectionId: string,
-  options: { anonymous?: boolean; sort?: CollectionSort } = {},
-): Promise<{ collection: any; images: any[] }> {
+  options: ReadCollectionOptions = {},
+): Promise<ReadCollectionResult> {
+  const sort = options.sort || 'added';
+  const page = options.page && options.page > 0 ? options.page : 1;
+  const per = options.per && options.per > 0 ? Math.min(options.per, 100) : 100;
+  const useApi = Boolean(options.paginated) && !options.anonymous && Boolean(resolveAccessToken());
+
+  if (useApi) {
+    const [collection, images] = await Promise.all([
+      getCollectionDetail(collectionId),
+      listCollectionImages(collectionId, page, per),
+    ]);
+    const total = collection?.total_image_count;
+    const sorted = sortCollectionImages(images, sort);
+    return {
+      collection,
+      images: sorted,
+      page,
+      per,
+      returnedImageCount: sorted.length,
+      totalImageCount: typeof total === 'number' ? total : undefined,
+      truncated: typeof total === 'number' ? page * per < total : false,
+      source: 'api',
+    };
+  }
+
+  // Only --anonymous drops the token here: a private collection of your own
+  // reads fine through the web endpoint with it.
   const collection = await getCollection(collectionId, {
     anonymous: Boolean(options.anonymous),
   });
   const images = sortCollectionImages(
     Array.isArray(collection?.images) ? collection.images : [],
-    options.sort || 'added',
+    sort,
   );
-  return { collection, images };
+  const total = collection?.total_image_count;
+  return {
+    collection,
+    images,
+    page: 1,
+    per: images.length,
+    returnedImageCount: images.length,
+    totalImageCount: typeof total === 'number' ? total : undefined,
+    truncated: typeof total === 'number' ? images.length < total : false,
+    source: 'web',
+  };
+}
+
+/**
+ * Collections whose name contains the query, or all of them when there is no
+ * query. Matching is case-insensitive and ignores surrounding whitespace,
+ * because a name people say out loud rarely matches one stored with emoji and
+ * padding.
+ */
+export async function findCollections(query?: string): Promise<GyazoCollectionSummary[]> {
+  const collections = await listCollections();
+  const needle = normalizeText(query)?.toLowerCase();
+  if (!needle) return collections;
+  return collections.filter((collection) =>
+    (collection.name || '').toLowerCase().includes(needle),
+  );
 }

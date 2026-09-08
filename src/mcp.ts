@@ -30,7 +30,12 @@ import {
 } from './format';
 import { listCaptures, listCapturesSince, type CaptureAlias } from './services/memory';
 import { buildSummary, toSummaryJson } from './services/analytics';
-import { COLLECTION_SORTS, readCollection, type CollectionSort } from './services/collections';
+import {
+  COLLECTION_SORTS,
+  findCollections,
+  readCollection,
+  type CollectionSort,
+} from './services/collections';
 
 const SEARCH_QUERY_DESCRIPTION = [
   'Search keyword (max length: 200 characters).',
@@ -495,10 +500,18 @@ export function createMcpServer(): McpServer {
             'Image order: added (as the collection holds them), created (upload time) or ' +
               'captured (when the photo was taken)',
           ),
+        page: z.number().int().min(1).default(1).describe('Page of images to read'),
+        per: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .default(100)
+          .describe('Images per page (max: 100)'),
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    logged('gyazo_collection', async ({ id_or_url, sort }) => {
+    logged('gyazo_collection', async ({ id_or_url, sort, page, per }) => {
       const collectionId = normalizeCollectionId(id_or_url);
       if (!collectionId) {
         throw new Error(
@@ -508,18 +521,28 @@ export function createMcpServer(): McpServer {
         );
       }
 
-      const { collection, images } = await readCollection(collectionId, {
+      const result = await readCollection(collectionId, {
         sort: sort as CollectionSort,
+        paginated: true,
+        page,
+        per,
       });
+      const { collection, images } = result;
       return asJsonResult({
         id: collection?.id ?? collectionId,
-        ...(collection?.name !== undefined ? { name: collection.name } : {}),
+        ...(present(collection?.name) ? { name: collection.name } : {}),
         ...(collection?.description ? { description: collection.description } : {}),
-        ...(collection?.url !== undefined ? { url: collection.url } : {}),
-        ...(collection?.total_image_count !== undefined
-          ? { total_image_count: collection.total_image_count }
+        ...(present(collection?.url) ? { url: collection.url } : {}),
+        ...(result.totalImageCount !== undefined
+          ? { total_image_count: result.totalImageCount }
           : {}),
-        ...(collection?.user !== undefined ? { user: collection.user } : {}),
+        returned_image_count: result.returnedImageCount,
+        page: result.page,
+        per: result.per,
+        // Said out loud, because a collection that stops without saying so
+        // reads as a complete answer. Ask for the next page to see the rest.
+        truncated: result.truncated,
+        ...(present(collection?.user) ? { user: collection.user } : {}),
         images: images.map(toMetadata),
       });
     }),
@@ -613,6 +636,53 @@ export function createMcpServer(): McpServer {
         );
       }
       return asMetadataListResult(result.images);
+    }),
+  );
+
+  server.registerTool(
+    'gyazo_collections',
+    {
+      title: 'Find a Gyazo collection by name',
+      description:
+        'The collections the user has, with their IDs and how many captures each holds. ' +
+        'Use this to turn a collection the user names out loud into the ID that ' +
+        'gyazo_collection needs.',
+      inputSchema: {
+        query: z
+          .string()
+          .optional()
+          .describe('Part of a collection name to match, case-insensitively. Omit for all of them'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    logged('gyazo_collections', async ({ query }) => {
+      const collections = await findCollections(query);
+      if (collections.length === 0) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: query
+                ? `No collections match ${JSON.stringify(query)}.`
+                : 'No collections found.',
+            },
+          ],
+        };
+      }
+      return asJsonResult(
+        collections.map((collection) => ({
+          id: collection.id,
+          ...(present(collection.name) ? { name: collection.name } : {}),
+          ...(collection.description ? { description: collection.description } : {}),
+          ...(present(collection.total_image_count)
+            ? { total_image_count: collection.total_image_count }
+            : {}),
+          ...(present(collection.url) ? { url: collection.url } : {}),
+          ...(present(collection.list_updated_at)
+            ? { list_updated_at: collection.list_updated_at }
+            : {}),
+        })),
+      );
     }),
   );
 

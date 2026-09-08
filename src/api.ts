@@ -27,6 +27,9 @@ const apiSearchUrl = () => `${apiOrigin()}/api/search`;
 const apiUsersMeUrl = () => `${apiOrigin()}/api/users/me`;
 const apiUploadUrl = () => `${uploadOrigin()}/api/upload`;
 const webCollectionUrl = (id: string) => `${webOrigin()}/collections/${id}.json`;
+const apiCollectionsUrl = () => `${apiOrigin()}/api/v2/collections`;
+const apiCollectionUrl = (id: string) => `${apiCollectionsUrl()}/${id}`;
+const apiCollectionImagesUrl = (id: string) => `${apiCollectionUrl(id)}/images`;
 
 export interface GyazoImage {
   image_id: string;
@@ -119,6 +122,45 @@ export async function getCollection(
     headers.Authorization = `Bearer ${config.GYAZO_ACCESS_TOKEN}`;
   }
   return requestWithRetry(webCollectionUrl(collectionId), {}, headers);
+}
+
+export interface GyazoCollectionSummary {
+  id: string;
+  name?: string;
+  description?: string | null;
+  url?: string;
+  total_image_count?: number;
+  list_updated_at?: string;
+}
+
+/**
+ * The collections the token can see, newest activity first as the API orders
+ * them. Needed to turn a collection people call by name into an ID.
+ */
+export async function listCollections(): Promise<GyazoCollectionSummary[]> {
+  const data = await requestWithRetry(apiCollectionsUrl());
+  if (Array.isArray(data)) return data;
+  return Array.isArray(data?.collections) ? data.collections : [];
+}
+
+/** A collection's own fields, without its images. */
+export async function getCollectionDetail(collectionId: string): Promise<any> {
+  return requestWithRetry(apiCollectionUrl(collectionId));
+}
+
+/**
+ * A page of a collection's images. Unlike the public web endpoint, which
+ * returns the first 100 and ignores every paging parameter, this one really
+ * pages, and its images carry the raw EXIF.
+ */
+export async function listCollectionImages(
+  collectionId: string,
+  page: number = 1,
+  per: number = 100,
+): Promise<GyazoImage[]> {
+  const data = await requestWithRetry(apiCollectionImagesUrl(collectionId), { page, per });
+  if (Array.isArray(data)) return data;
+  return Array.isArray(data?.images) ? data.images : [];
 }
 
 export async function uploadImage(options: GyazoUploadOptions): Promise<GyazoImage> {

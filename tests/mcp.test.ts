@@ -372,6 +372,7 @@ test('tools/list offers the read-only tools and nothing that writes', async () =
     const names = response.result.tools.map((tool: any) => tool.name).sort();
     expect(names).toEqual([
       'gyazo_collection',
+      'gyazo_collections',
       'gyazo_image',
       'gyazo_latest_image',
       'gyazo_list',
@@ -747,29 +748,41 @@ test('gyazo_summary limits the ranking rows like the CLI', async () => {
 
 const COLLECTION_ID = '21ca16a1023c667a7a437be561a65018';
 
+/**
+ * Serves a collection on both routes: the API pair that a read with a token
+ * uses, and the public web endpoint that an anonymous read falls back to.
+ */
 function collectionStub(): StubHandler {
-  return (_req, res) => {
+  const images = [
+    { ...IMAGES[0], created_at: '2026-08-30T05:00:00.000Z' },
+    { ...IMAGES[1], created_at: '2026-08-30T07:00:00.000Z' },
+  ];
+  const meta = {
+    id: COLLECTION_ID,
+    name: 'Hiroshima 2026',
+    url: `https://gyazo.com/collections/${COLLECTION_ID}`,
+    total_image_count: 2,
+    user: { id: '5342', name: 'yuiseki' },
+  };
+  return (req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        id: COLLECTION_ID,
-        name: 'Hiroshima 2026',
-        url: `https://gyazo.com/collections/${COLLECTION_ID}`,
-        total_image_count: 2,
-        user: { id: '5342', name: 'yuiseki' },
-        images: [
-          { ...IMAGES[0], created_at: '2026-08-30T05:00:00.000Z' },
-          { ...IMAGES[1], created_at: '2026-08-30T07:00:00.000Z' },
-        ],
-      }),
-    );
+    if (url.pathname.endsWith('/images')) {
+      res.end(JSON.stringify(images));
+      return;
+    }
+    if (url.pathname.startsWith('/api/')) {
+      res.end(JSON.stringify(meta));
+      return;
+    }
+    res.end(JSON.stringify({ ...meta, images }));
   };
 }
 
 test('gyazo_collection reads a collection and its images', async () => {
   const cacheDir = createTempCacheDir();
   const stub = await startStubServer(collectionStub());
-  const session = startMcpServer(cacheDir, { webOrigin: stub.origin });
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin, webOrigin: stub.origin });
   try {
     await initialize(session);
     const response = await session.request('tools/call', {
@@ -785,7 +798,8 @@ test('gyazo_collection reads a collection and its images', async () => {
 
     const requested = stub.requests.find((request) => request.url.includes(COLLECTION_ID));
     expect(requested).toBeDefined();
-    expect(requested!.url).toContain(`/collections/${COLLECTION_ID}.json`);
+    // With a token it goes through the API, which is the route that can page.
+    expect(requested!.url).toContain(`/api/v2/collections/${COLLECTION_ID}`);
   } finally {
     await session.close();
     await stub.close();
@@ -795,7 +809,7 @@ test('gyazo_collection reads a collection and its images', async () => {
 test('gyazo_collection sorts by capture time when asked', async () => {
   const cacheDir = createTempCacheDir();
   const stub = await startStubServer(collectionStub());
-  const session = startMcpServer(cacheDir, { webOrigin: stub.origin });
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin, webOrigin: stub.origin });
   try {
     await initialize(session);
     const response = await session.request('tools/call', {
@@ -814,7 +828,7 @@ test('gyazo_collection sorts by capture time when asked', async () => {
 test('gyazo_collection refuses an image URL', async () => {
   const cacheDir = createTempCacheDir();
   const stub = await startStubServer(collectionStub());
-  const session = startMcpServer(cacheDir, { webOrigin: stub.origin });
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin, webOrigin: stub.origin });
   try {
     await initialize(session);
     const response = await session.request('tools/call', {
@@ -921,6 +935,119 @@ test('the OCR text comes through from wherever the response carries it', async (
     for (const [key, value] of Object.entries(image)) {
       expect(value, `${key} should be omitted rather than null`).not.toBeNull();
     }
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+// --- collections through the API ------------------------------------------
+
+/** The API endpoints: the collection itself, its images a page at a time. */
+function collectionApiStub(total: number, pageSize = 2): StubHandler {
+  const images = Array.from({ length: total }, (_, index) => ({
+    image_id: `dd${String(index).padStart(30, '0')}`,
+    permalink_url: `https://gyazo.com/dd${String(index).padStart(30, '0')}`,
+    url: `https://i.gyazo.com/dd${String(index).padStart(30, '0')}.jpg`,
+    type: 'jpg',
+    created_at: new Date(Date.UTC(2026, 7, 30, 0, index)).toISOString(),
+    metadata: { app: 'Gyazo Android' },
+  }));
+  return (req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url.pathname.endsWith('/images')) {
+      const page = Number(url.searchParams.get('page') || '1');
+      const per = Number(url.searchParams.get('per') || String(pageSize));
+      res.end(JSON.stringify(images.slice((page - 1) * per, page * per)));
+      return;
+    }
+    res.end(
+      JSON.stringify({
+        id: COLLECTION_ID,
+        name: '広島実績解除2026',
+        url: `https://gyazo.com/collections/${COLLECTION_ID}`,
+        total_image_count: total,
+        user: { name: 'yuiseki' },
+      }),
+    );
+  };
+}
+
+test('gyazo_collection pages through a collection and says what is left', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(collectionApiStub(5));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const first = await session.request('tools/call', {
+      name: 'gyazo_collection',
+      arguments: { id_or_url: COLLECTION_ID, per: 2 },
+    });
+    const page1 = JSON.parse(first.result.content[0].text);
+    expect(page1.total_image_count).toBe(5);
+    expect(page1.returned_image_count).toBe(2);
+    expect(page1.page).toBe(1);
+    expect(page1.truncated).toBe(true);
+    expect(page1.images).toHaveLength(2);
+
+    const third = await session.request('tools/call', {
+      name: 'gyazo_collection',
+      arguments: { id_or_url: COLLECTION_ID, per: 2, page: 3 },
+    });
+    const page3 = JSON.parse(third.result.content[0].text);
+    expect(page3.page).toBe(3);
+    expect(page3.returned_image_count).toBe(1);
+    expect(page3.truncated).toBe(false);
+    expect(page3.images[0].image_id).toBe('dd000000000000000000000000000004');
+
+    const requested = stub.requests
+      .filter((request) => request.url.includes('/images'))
+      .map((request) => new URL(request.url, 'http://127.0.0.1').searchParams.get('page'));
+    expect(requested).toEqual(['1', '3']);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_collections lists collections and filters them by name', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (!req.url?.includes('/api/v2/collections')) {
+      res.end(JSON.stringify([]));
+      return;
+    }
+    res.end(
+      JSON.stringify([
+        { id: 'c1'.padEnd(32, '0'), name: '広島実績解除2026', total_image_count: 198 },
+        { id: 'c2'.padEnd(32, '0'), name: 'クアラルンプール実績解除', total_image_count: 42 },
+        { id: 'c3'.padEnd(32, '0'), name: 'yuisekiのラーメンマップ', total_image_count: 7 },
+      ]),
+    );
+  });
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const all = await session.request('tools/call', { name: 'gyazo_collections', arguments: {} });
+    expect(JSON.parse(all.result.content[0].text)).toHaveLength(3);
+
+    const hit = await session.request('tools/call', {
+      name: 'gyazo_collections',
+      arguments: { query: 'クアラルンプール' },
+    });
+    const found = JSON.parse(hit.result.content[0].text);
+    expect(found).toHaveLength(1);
+    expect(found[0].name).toBe('クアラルンプール実績解除');
+    expect(found[0].id).toBe('c2'.padEnd(32, '0'));
+    expect(found[0].total_image_count).toBe(42);
+
+    const miss = await session.request('tools/call', {
+      name: 'gyazo_collections',
+      arguments: { query: 'にわとり' },
+    });
+    expect(miss.result.content[0].text).toMatch(/no collections/i);
   } finally {
     await session.close();
     await stub.close();
