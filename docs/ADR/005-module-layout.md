@@ -20,7 +20,9 @@ during the move would fail them.
 
 ```
 src/
-  index.ts              commander definitions, and the entry dispatch
+  index.ts              the program, the register calls, the entry dispatch
+  commands/             one module per command, each exporting
+                        register<Name>Command(program)
   api.ts                HTTP against Gyazo
   storage.ts            reading and writing the cache files
   config.ts             environment
@@ -37,9 +39,13 @@ src/
     collections.ts      collections
 ```
 
-Dependencies run one way: `services/` may use the modules above it, and
-nothing above `services/` reaches back down into it. Within `services/`,
-`analytics` and `images` may use `memory`, and `collections` may use `images`.
+Dependencies run one way. A command module may use anything below it;
+`services/` may use the modules above it; nothing below reaches back up into
+`commands/`. Within `services/`, `analytics` and `images` may use `memory`, and
+`collections` may use `images`.
+
+The register calls in `index.ts` run in the order the commands were defined
+before, because that order is what `--help` prints.
 
 Two placements are worth recording, because they were both the second attempt.
 `mergeImageForDisplay` and `shouldEnrichForLocationDisplay` sound like display
@@ -51,7 +57,11 @@ it and it reports failure by exiting.
 
 ## Consequences
 
-- `index.ts` is about 1180 lines and is almost entirely command definitions.
+- `index.ts` is about 100 lines: the program metadata, the register calls, and
+  the two things that happen before parsing, which are the bare-argument
+  dispatch and the MCP branch.
+- The largest command module is `list.ts` at about 220 lines. The rest are
+  under 120.
 - `noUnusedLocals` and `noUnusedParameters` are on. The move left dozens of
   imports behind for functions that were no longer there, and that class of
   leftover should fail the build.
