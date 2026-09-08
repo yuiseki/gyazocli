@@ -123,49 +123,21 @@ import {
   enrichImagesForLocationDisplay,
   printListImages,
 } from './services/images';
+import {
+  COLLECTION_SORTS,
+  CollectionSort,
+  requireCollectionId,
+  parseCollectionSort,
+  collectionSortKey,
+  sortCollectionImages,
+  printCollectionMarkdown,
+} from './services/collections';
 
 // Re-exported: these used to live here, and the shorthand tests reach for them.
 export { normalizeImageId, normalizeCollectionId };
 
 const program = new Command();
 const UPLOAD_DESC_TAG = '#gyazocli_uploads';
-
-const COLLECTION_SORTS = ['added', 'created', 'captured'] as const;
-type CollectionSort = (typeof COLLECTION_SORTS)[number];
-
-function requireCollectionId(input: string): string {
-  const collectionId = normalizeCollectionId(input);
-  if (!collectionId) {
-    console.error(`Error: '${input}' is not a Gyazo collection ID or URL.`);
-    console.error('Hint: pass a 32-character collection ID or a https://gyazo.com/collections/<id> URL.');
-    process.exit(1);
-  }
-  return collectionId;
-}
-
-function parseCollectionSort(value: unknown): CollectionSort {
-  if (value === undefined || value === null) return 'added';
-  if ((COLLECTION_SORTS as readonly string[]).includes(String(value))) {
-    return String(value) as CollectionSort;
-  }
-  console.error(`Error: --sort must be one of ${COLLECTION_SORTS.join(', ')}.`);
-  process.exit(1);
-}
-
-function collectionSortKey(image: any, sort: CollectionSort): string {
-  if (sort === 'captured') {
-    return image?.exif_captured_at || image?.metadata?.exif_normalized?.time || image?.created_at || '';
-  }
-  return image?.created_at || '';
-}
-
-function sortCollectionImages(images: any[], sort: CollectionSort): any[] {
-  if (sort === 'added') return images;
-  // Newest first, matching how `list` presents images.
-  return [...images].sort((a, b) =>
-    collectionSortKey(b, sort).localeCompare(collectionSortKey(a, sort)),
-  );
-}
 
 
 program
@@ -250,47 +222,6 @@ async function readStdinBuffer(): Promise<Buffer> {
     process.stdin.on('end', () => resolve(Buffer.concat(chunks)));
     process.stdin.on('error', reject);
   });
-}
-
-function printCollectionMarkdown(collection: any, images: any[]): void {
-  const lines: string[] = [];
-  lines.push('## Gyazo Collection');
-  lines.push('');
-
-  const name = normalizeText(collection?.name);
-  if (name) lines.push(`- Name: ${name}`);
-
-  const collectionId = collection?.id;
-  const url = collection?.url || (collectionId ? `https://gyazo.com/collections/${collectionId}` : undefined);
-  if (url) lines.push(`- URL: <${url}>`);
-
-  const description = normalizeText(collection?.description);
-  if (description) lines.push(`- Description: ${description}`);
-
-  const owner = normalizeText(collection?.user?.name);
-  if (owner) lines.push(`- Owner: ${owner}`);
-
-  const total = collection?.total_image_count;
-  const shown = images.length;
-  const truncated = typeof total === 'number' && total > shown;
-  lines.push(`- Images: ${truncated ? `${shown} of ${total}` : shown}`);
-
-  const updatedAt = normalizeText(collection?.list_updated_at);
-  if (updatedAt) lines.push(`- Updated at: ${formatCreatedAt(updatedAt)}`);
-
-  console.log(lines.join('\n'));
-
-  if (truncated) {
-    console.log('');
-    console.log('Note: this endpoint returns only the first 100 images of a collection.');
-  }
-
-  if (shown > 0) {
-    console.log('');
-    console.log('### Images');
-    console.log('');
-    printListImages(images);
-  }
 }
 
 
