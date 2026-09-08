@@ -23,7 +23,7 @@ program
   .name('gyazo')
   .description('Gyazo Memory CLI for AI Secretary')
   .option('--mcp-server', 'run as a Model Context Protocol server over stdio')
-  .version('0.1.1');
+  .version('0.2.0');
 
 registerConfigCommand(program);
 registerListCommand(program);
