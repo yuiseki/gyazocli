@@ -5,15 +5,7 @@ import type { Command } from 'commander';
 import { ensureAccessToken } from '../credentials';
 import { resolveRankingRangeOption } from '../dates';
 import { parsePositiveIntegerOption } from '../options';
-import {
-  warmDateCacheForTags,
-  warmDateCacheForLocations,
-} from '../services/memory';
-import {
-  DailySummary,
-  buildDailySummariesFromImageCache,
-  renderSummaryText,
-} from '../services/analytics';
+import { buildSummary, renderSummaryText, toSummaryJson } from '../services/analytics';
 
 export function registerSummaryCommand(program: Command): void {
   program
@@ -34,43 +26,10 @@ export function registerSummaryCommand(program: Command): void {
         const maxPages = parsePositiveIntegerOption(options.maxPages, '--max-pages');
         const useCache = options.cache !== false;
 
-        let dailySummaries: DailySummary[] = [];
-
-        if (useCache) {
-          dailySummaries = buildDailySummariesFromImageCache(targetDate);
-          const totalUploads = dailySummaries.reduce((sum, day) => sum + day.imageCount, 0);
-          if (totalUploads === 0) {
-            await warmDateCacheForTags(targetDate, maxPages, true);
-            await warmDateCacheForLocations(targetDate, maxPages, true);
-            dailySummaries = buildDailySummariesFromImageCache(targetDate);
-          } else {
-            const hasMetadata = dailySummaries.some(day =>
-              day.apps.length > 0 || day.domains.length > 0 || day.tags.length > 0 || day.locations.length > 0,
-            );
-            if (!hasMetadata) {
-              await warmDateCacheForTags(targetDate, maxPages, true);
-              await warmDateCacheForLocations(targetDate, maxPages, true);
-              dailySummaries = buildDailySummariesFromImageCache(targetDate);
-            }
-          }
-        } else {
-          await warmDateCacheForTags(targetDate, maxPages, false);
-          await warmDateCacheForLocations(targetDate, maxPages, false);
-          dailySummaries = buildDailySummariesFromImageCache(targetDate);
-        }
+        const dailySummaries = await buildSummary({ targetDate, maxPages, useCache });
 
         if (options.json) {
-          console.log(JSON.stringify({
-            date: targetDate.dateKey,
-            days: dailySummaries.map(day => ({
-              date: day.date,
-              image_count: day.imageCount,
-              apps: day.apps.slice(0, limit),
-              domains: day.domains.slice(0, limit),
-              tags: day.tags.slice(0, limit),
-              locations: day.locations.slice(0, limit),
-            })),
-          }, null, 2));
+          console.log(JSON.stringify(toSummaryJson(targetDate.dateKey, dailySummaries, limit), null, 2));
           return;
         }
 

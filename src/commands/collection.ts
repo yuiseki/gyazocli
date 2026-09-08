@@ -2,13 +2,11 @@
  * The `collection` command.
  */
 import type { Command } from 'commander';
-import { getCollection } from '../api';
 import { resolveAccessToken } from '../credentials';
-
 import {
   requireCollectionId,
   parseCollectionSort,
-  sortCollectionImages,
+  readCollection,
   printCollectionMarkdown,
 } from '../services/collections';
 
@@ -30,17 +28,16 @@ export function registerCollectionCommand(program: Command): void {
       }
 
       try {
-        const collection = await getCollection(collectionId, { anonymous: Boolean(options.anonymous) });
+        const { collection, images } = await readCollection(collectionId, {
+          anonymous: Boolean(options.anonymous),
+          sort,
+        });
 
         if (options.json) {
           console.log(JSON.stringify(collection, null, 2));
           return;
         }
 
-        const images = sortCollectionImages(
-          Array.isArray(collection?.images) ? collection.images : [],
-          sort,
-        );
         printCollectionMarkdown(collection, images);
       } catch (error: any) {
         if (error?.response?.status === 404) {

@@ -264,3 +264,17 @@ export function getDatePartsInRange(start: Date, end: Date): Array<{ year: strin
 
   return dates;
 }
+
+/**
+ * `yyyy-mm-dd-hh`, the shape the hourly cache is keyed by. Returns null rather
+ * than reporting, because how to report differs between the CLI and the MCP
+ * server.
+ */
+export function parseHourOption(
+  value: string,
+): { year: string; month: string; day: string; hour: string } | null {
+  const parts = (value || '').split('-');
+  if (parts.length !== 4) return null;
+  const [year, month, day, hour] = parts;
+  return { year, month, day, hour };
+}

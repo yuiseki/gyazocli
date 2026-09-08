@@ -4,6 +4,7 @@
  * stricter than the one for images. Read-only: this CLI neither creates nor
  * edits collections.
  */
+import { getCollection } from '../api';
 import { normalizeCollectionId } from '../ids';
 import { formatCreatedAt, normalizeText } from '../format';
 import { printListImages } from './images';
@@ -85,4 +86,22 @@ export function printCollectionMarkdown(collection: any, images: any[]): void {
     console.log('');
     printListImages(images);
   }
+}
+
+/**
+ * A collection and its images in the requested order. The API returns the
+ * images in the order they were added, which is the default here too.
+ */
+export async function readCollection(
+  collectionId: string,
+  options: { anonymous?: boolean; sort?: CollectionSort } = {},
+): Promise<{ collection: any; images: any[] }> {
+  const collection = await getCollection(collectionId, {
+    anonymous: Boolean(options.anonymous),
+  });
+  const images = sortCollectionImages(
+    Array.isArray(collection?.images) ? collection.images : [],
+    options.sort || 'added',
+  );
+  return { collection, images };
 }

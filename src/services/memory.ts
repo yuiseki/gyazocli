@@ -8,7 +8,7 @@
  * the IDs captured in that hour plus the metadata the rankings count, so a
  * ranking does not have to open every image to answer.
  */
-import { listImages, getImageDetail } from '../api';
+import { listImages, getImageDetail, searchImages } from '../api';
 import {
   saveImageCache,
   loadImageCache,
@@ -382,4 +382,135 @@ export function supplementAltTextFromSearchCache(image: any, useCache: boolean =
 
 export function supplementAltTextForDisplay(images: any[], useCache: boolean = true): any[] {
   return images.map(img => supplementAltTextFromSearchCache(img, useCache).image);
+}
+
+export type CaptureAlias = 'photos' | 'uploaded';
+
+export interface ListCapturesOptions {
+  page: number;
+  limit: number;
+  maxPages: number;
+  useCache: boolean;
+  /** A parsed --date/--today range, when the request is for a range. */
+  date?: ParsedDateOption;
+  /** A parsed --hour, when the request is for one hour of the cache. */
+  hour?: { year: string; month: string; day: string; hour: string };
+  alias?: CaptureAlias;
+}
+
+export interface ListCapturesResult {
+  images: any[];
+  /** Which lookup came back empty, for a caller that wants to say so. */
+  empty?: 'date' | 'hour';
+}
+
+const ALIAS_QUERIES: Record<CaptureAlias, string> = {
+  photos: 'has:location',
+  uploaded: 'gyazocli_uploads',
+};
+
+function byNewestFirst(a: any, b: any): number {
+  return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+}
+
+function page(images: any[], pageNumber: number, limit: number): any[] {
+  const start = (pageNumber - 1) * limit;
+  return images.slice(start, start + limit);
+}
+
+/**
+ * The captures a `list` request asks for. Four ways in, in the order the
+ * options decide between them: a saved search alias, a date range, one hour of
+ * the cache, or simply the most recent page.
+ *
+ * Validation is the caller's: this takes options that already agree with each
+ * other, because how to refuse differs between the CLI and the MCP server.
+ */
+export async function listCaptures(options: ListCapturesOptions): Promise<ListCapturesResult> {
+  const { page: pageNumber, limit, maxPages, useCache } = options;
+
+  if (options.alias) {
+    const query = ALIAS_QUERIES[options.alias];
+    if (!options.date) {
+      return { images: await searchImages(query, pageNumber, limit) };
+    }
+
+    const collected: any[] = [];
+    for (let searchPage = 1; searchPage <= maxPages; searchPage++) {
+      const pageImages = await searchImages(query, searchPage, 100);
+      if (pageImages.length === 0) break;
+
+      let reachedLimit = false;
+      for (const img of pageImages) {
+        const createdAt = new Date(img.created_at);
+        if (Number.isNaN(createdAt.getTime())) continue;
+        if (createdAt > options.date.end) continue;
+        if (createdAt < options.date.start) {
+          reachedLimit = true;
+          break;
+        }
+        collected.push(img);
+      }
+      if (reachedLimit) break;
+    }
+
+    collected.sort(byNewestFirst);
+    return { images: page(collected, pageNumber, limit) };
+  }
+
+  if (options.date) {
+    const targetDate = options.date;
+    let imageIds: string[] = [];
+    if (useCache) {
+      imageIds = loadImageIdsFromDateRangeCache(targetDate);
+      if (imageIds.length === 0) {
+        await warmDateCacheForList(targetDate, maxPages, true);
+        imageIds = loadImageIdsFromDateRangeCache(targetDate);
+      }
+    } else {
+      imageIds = await warmDateCacheForList(targetDate, maxPages, false);
+    }
+
+    if (imageIds.length === 0) {
+      return { images: [], empty: 'date' };
+    }
+
+    const images = imageIds
+      .map((id) => loadImageCache(id))
+      .filter((img): img is any => img !== null)
+      .filter((img) => {
+        const createdAt = new Date(img.created_at);
+        if (Number.isNaN(createdAt.getTime())) return false;
+        return createdAt >= targetDate.start && createdAt <= targetDate.end;
+      });
+
+    images.sort(byNewestFirst);
+    return { images: page(images, pageNumber, limit) };
+  }
+
+  if (options.hour) {
+    const { year, month, day, hour } = options.hour;
+    const imageIds = loadHourlyCache(year, month, day, hour);
+    if (!imageIds) {
+      return { images: [], empty: 'hour' };
+    }
+
+    if (useCache) {
+      return { images: imageIds.map((id) => loadImageCache(id)).filter((img) => img !== null) };
+    }
+
+    const images: any[] = [];
+    for (const imageId of imageIds) {
+      try {
+        const detail = await getImageDetail(imageId);
+        saveImageCache(imageId, detail);
+        images.push(detail);
+      } catch (_error) {
+        // Skip failed items and continue with the rest.
+      }
+    }
+    return { images };
+  }
+
+  return { images: await listImages(pageNumber, limit) };
 }

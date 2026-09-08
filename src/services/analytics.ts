@@ -22,7 +22,12 @@ import {
   extractImageLocations,
   extractImageTags,
 } from '../format';
-import { loadOrBuildHourlyMetadataEntries, type MetadataValueExtractor } from './memory';
+import {
+  loadOrBuildHourlyMetadataEntries,
+  warmDateCacheForTags,
+  warmDateCacheForLocations,
+  type MetadataValueExtractor,
+} from './memory';
 
 export type AppRank = {
   app: string;
@@ -624,4 +629,59 @@ export function renderSummaryText(params: {
   }
 
   return lines.join('\n').trimEnd();
+}
+
+/**
+ * The daily summaries for a range, warming the cache when it has nothing to
+ * say. An empty range and a range whose images carry no metadata are both
+ * worth one attempt at filling, because a cache built by an earlier version
+ * may hold images without the metadata buckets.
+ */
+export async function buildSummary(options: {
+  targetDate: ParsedDateOption;
+  maxPages: number;
+  useCache: boolean;
+}): Promise<DailySummary[]> {
+  const { targetDate, maxPages, useCache } = options;
+
+  if (!useCache) {
+    await warmDateCacheForTags(targetDate, maxPages, false);
+    await warmDateCacheForLocations(targetDate, maxPages, false);
+    return buildDailySummariesFromImageCache(targetDate);
+  }
+
+  let dailySummaries = buildDailySummariesFromImageCache(targetDate);
+  const totalUploads = dailySummaries.reduce((sum, day) => sum + day.imageCount, 0);
+  const hasMetadata = dailySummaries.some(
+    (day) =>
+      day.apps.length > 0 ||
+      day.domains.length > 0 ||
+      day.tags.length > 0 ||
+      day.locations.length > 0,
+  );
+  if (totalUploads === 0 || !hasMetadata) {
+    await warmDateCacheForTags(targetDate, maxPages, true);
+    await warmDateCacheForLocations(targetDate, maxPages, true);
+    dailySummaries = buildDailySummariesFromImageCache(targetDate);
+  }
+  return dailySummaries;
+}
+
+/** The shape `summary --json` prints, and what the MCP tool returns. */
+export function toSummaryJson(
+  dateKey: string,
+  dailySummaries: DailySummary[],
+  limit: number,
+) {
+  return {
+    date: dateKey,
+    days: dailySummaries.map((day) => ({
+      date: day.date,
+      image_count: day.imageCount,
+      apps: day.apps.slice(0, limit),
+      domains: day.domains.slice(0, limit),
+      tags: day.tags.slice(0, limit),
+      locations: day.locations.slice(0, limit),
+    })),
+  };
 }
