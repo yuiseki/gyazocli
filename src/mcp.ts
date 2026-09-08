@@ -50,23 +50,67 @@ function serverVersion(): string {
  * capture is described here and its URLs are given for anything that wants the
  * pixels.
  */
-function toMetadata(
-  image: GyazoImage & {
-    thumb_url?: string;
-    exif_normalized?: { latitude?: number; longitude?: number };
-  },
-) {
+type ExifNormalized = {
+  latitude?: number;
+  longitude?: number;
+  time?: string;
+  timezone?: string;
+};
+
+type ImageWithLocation = GyazoImage & {
+  thumb_url?: string;
+  exif_normalized?: ExifNormalized;
+  metadata?: GyazoImage['metadata'] & {
+    exif_normalized?: ExifNormalized;
+    ocr?: { locale?: string; description?: string };
+  };
+};
+
+/** null and undefined both mean the capture does not carry the field. */
+function present<T>(value: T | null | undefined): value is T {
+  return value !== null && value !== undefined;
+}
+
+/**
+ * Where a capture was taken. This lives under `metadata`, and the top-level
+ * `exif_normalized` is null in every response this CLI reads, which is why
+ * coordinates were missing from all of the tool output until now. The
+ * top-level shape is still read, in case an endpoint starts filling it.
+ */
+function readLocation(image: ImageWithLocation): { latitude: number; longitude: number } | undefined {
+  const source = image?.metadata?.exif_normalized ?? image?.exif_normalized;
+  const latitude = source?.latitude;
+  const longitude = source?.longitude;
+  if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+    return undefined;
+  }
+  return { latitude, longitude };
+}
+
+/**
+ * The OCR text, from wherever this response carries it. Same mistake as the
+ * coordinates: the responses that have OCR keep it under `metadata`, and the
+ * top-level field comes back null.
+ */
+function readOcr(image: ImageWithLocation) {
+  const ocr = present(image?.ocr) ? image.ocr : image?.metadata?.ocr;
+  return present(ocr) && present(ocr.description) ? ocr : undefined;
+}
+
+function toMetadata(image: ImageWithLocation) {
+  const location = readLocation(image);
+  const ocr = readOcr(image);
   return {
     image_id: image.image_id,
     permalink_url: image.permalink_url,
     url: image.url,
-    ...(image.thumb_url !== undefined ? { thumb_url: image.thumb_url } : {}),
-    ...(image.type !== undefined ? { mimeType: `image/${image.type}` } : {}),
+    ...(present(image.thumb_url) ? { thumb_url: image.thumb_url } : {}),
+    ...(present(image.type) ? { mimeType: `image/${image.type}` } : {}),
     created_at: image.created_at,
-    ...(image.alt_text !== undefined ? { alt_text: image.alt_text } : {}),
-    ...(image.ocr !== undefined ? { ocr: image.ocr } : {}),
-    ...(image.metadata !== undefined ? { metadata: image.metadata } : {}),
-    ...(image.exif_normalized !== undefined ? { exif_normalized: image.exif_normalized } : {}),
+    ...(present(image.alt_text) && image.alt_text !== '' ? { alt_text: image.alt_text } : {}),
+    ...(ocr !== undefined ? { ocr } : {}),
+    ...(location !== undefined ? { location } : {}),
+    ...(present(image.metadata) ? { metadata: image.metadata } : {}),
   };
 }
 

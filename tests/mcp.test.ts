@@ -331,8 +331,19 @@ const DETAIL = {
   created_at: '2026-02-22T02:34:56+0900',
   alt_text: 'a station sign',
   ocr: { locale: 'ja', description: '京都' },
-  metadata: { app: 'Safari', title: 'Kyoto', url: 'https://example.com/kyoto' },
-  exif_normalized: { latitude: 34.9858, longitude: 135.7588 },
+  // Where Gyazo actually puts the coordinates: under metadata. The top-level
+  // exif_normalized is null in every response the CLI reads.
+  metadata: {
+    app: 'Safari',
+    title: 'Kyoto',
+    url: 'https://example.com/kyoto',
+    exif_normalized: {
+      timezone: 'utc',
+      latitude: 34.9858,
+      longitude: 135.7588,
+      time: '2026-02-22T02:34:56.000Z',
+    },
+  },
 };
 
 /** Serves image detail and the image list, so both tools can be exercised. */
@@ -401,7 +412,7 @@ test('gyazo_image returns metadata, and no image bytes', async () => {
     expect(image.mimeType).toBe('image/png');
     expect(image.ocr).toEqual(DETAIL.ocr);
     expect(image.metadata.title).toBe('Kyoto');
-    expect(image.exif_normalized).toEqual(DETAIL.exif_normalized);
+    expect(image.location).toEqual({ latitude: 34.9858, longitude: 135.7588 });
     expect(image.data).toBeUndefined();
 
     const detailRequest = stub.requests.find((request) => request.url.startsWith('/api/images/'));
@@ -812,6 +823,103 @@ test('gyazo_collection refuses an image URL', async () => {
     const failed = Boolean(response.error) || response.result?.isError === true;
     expect(failed).toBe(true);
     expect(stub.requests).toHaveLength(0);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('a capture with no coordinates gets no location field', async () => {
+  const cacheDir = createTempCacheDir();
+  const noLocation = { ...DETAIL, metadata: { app: 'Safari', title: 'Kyoto' } };
+  const stub = await startStubServer(imageStub(noLocation, []));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_image',
+      arguments: { id_or_url: DETAIL.image_id },
+    });
+    const image = JSON.parse(response.result.content[0].text);
+    expect(image.location).toBeUndefined();
+    expect('location' in image).toBe(false);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('the older top-level shape is still read', async () => {
+  const cacheDir = createTempCacheDir();
+  const topLevel = {
+    ...DETAIL,
+    metadata: { app: 'Safari' },
+    exif_normalized: { latitude: 35.0116, longitude: 135.7681 },
+  };
+  const stub = await startStubServer(imageStub(topLevel, []));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_image',
+      arguments: { id_or_url: DETAIL.image_id },
+    });
+    const image = JSON.parse(response.result.content[0].text);
+    expect(image.location).toEqual({ latitude: 35.0116, longitude: 135.7681 });
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_list carries the location through too', async () => {
+  const cacheDir = createTempCacheDir();
+  const withLocation = {
+    ...IMAGES[0],
+    metadata: {
+      ...IMAGES[0].metadata,
+      exif_normalized: { timezone: 'utc', latitude: 34.3861, longitude: 132.4596 },
+    },
+  };
+  const stub = await startStubServer(listStub([withLocation]));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', { name: 'gyazo_list', arguments: {} });
+    const found = JSON.parse(response.result.content[0].text);
+    expect(found[0].location).toEqual({ latitude: 34.3861, longitude: 132.4596 });
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('the OCR text comes through from wherever the response carries it', async () => {
+  const cacheDir = createTempCacheDir();
+  const underMetadata = {
+    ...DETAIL,
+    ocr: null,
+    alt_text: '',
+    metadata: {
+      app: 'Gyazo Android',
+      ocr: { locale: 'und', description: 'お好み焼\nもり' },
+    },
+  };
+  const stub = await startStubServer(imageStub(underMetadata, []));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_image',
+      arguments: { id_or_url: DETAIL.image_id },
+    });
+    const image = JSON.parse(response.result.content[0].text);
+    expect(image.ocr.description).toBe('お好み焼\nもり');
+    // An empty alt_text and a null ocr are absences, not values.
+    expect('alt_text' in image).toBe(false);
+    for (const [key, value] of Object.entries(image)) {
+      expect(value, `${key} should be omitted rather than null`).not.toBeNull();
+    }
   } finally {
     await session.close();
     await stub.close();
