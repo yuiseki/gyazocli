@@ -71,3 +71,6 @@ jobs:
           grep -q '"gyazo_search"' handshake.jsonl
           grep -q '"gyazo_image"' handshake.jsonl
           grep -q '"gyazo_latest_image"' handshake.jsonl
+          grep -q '"gyazo_list"' handshake.jsonl
+          grep -q '"gyazo_summary"' handshake.jsonl
+          grep -q '"gyazo_collection"' handshake.jsonl
