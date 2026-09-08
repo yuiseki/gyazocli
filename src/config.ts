@@ -11,6 +11,7 @@ const configSchema = z.object({
   GYAZO_API_ORIGIN: z.string().optional(),
   GYAZO_UPLOAD_ORIGIN: z.string().optional(),
   GYAZO_WEB_ORIGIN: z.string().optional(),
+  GYAZO_IMAGE_ORIGIN: z.string().optional(),
 });
 
 export let config = configSchema.parse({
@@ -21,6 +22,7 @@ export let config = configSchema.parse({
   GYAZO_API_ORIGIN: process.env.GYAZO_API_ORIGIN,
   GYAZO_UPLOAD_ORIGIN: process.env.GYAZO_UPLOAD_ORIGIN,
   GYAZO_WEB_ORIGIN: process.env.GYAZO_WEB_ORIGIN,
+  GYAZO_IMAGE_ORIGIN: process.env.GYAZO_IMAGE_ORIGIN,
 });
 
 export function setAccessToken(token: string) {

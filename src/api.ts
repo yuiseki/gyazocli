@@ -5,6 +5,7 @@ import { config } from './config';
 const DEFAULT_API_ORIGIN = 'https://api.gyazo.com';
 const DEFAULT_UPLOAD_ORIGIN = 'https://upload.gyazo.com';
 const DEFAULT_WEB_ORIGIN = 'https://gyazo.com';
+const DEFAULT_IMAGE_ORIGIN = 'https://i.gyazo.com';
 
 function stripTrailingSlash(origin: string): string {
   return origin.replace(/\/+$/, '');
@@ -20,6 +21,10 @@ function uploadOrigin(): string {
 
 function webOrigin(): string {
   return stripTrailingSlash(config.GYAZO_WEB_ORIGIN || DEFAULT_WEB_ORIGIN);
+}
+
+function imageOrigin(): string {
+  return stripTrailingSlash(config.GYAZO_IMAGE_ORIGIN || DEFAULT_IMAGE_ORIGIN);
 }
 
 const apiBaseUrl = () => `${apiOrigin()}/api/images`;
@@ -161,6 +166,45 @@ export async function listCollectionImages(
   const data = await requestWithRetry(apiCollectionImagesUrl(collectionId), { page, per });
   if (Array.isArray(data)) return data;
   return Array.isArray(data?.images) ? data.images : [];
+}
+
+export type RenditionFormat = 'webp' | 'jpeg';
+
+export interface ImageRendition {
+  data: Buffer;
+  mimeType: string;
+  bytes: number;
+  url: string;
+  width: number;
+  format: RenditionFormat;
+}
+
+/**
+ * A width-limited rendition of a capture.
+ *
+ * The original can be several megabytes, which is no use to a model, and
+ * resizing locally would mean a native image library. Gyazo will do it: the
+ * rendition route takes a width and needs no credentials, so a capture can be
+ * handed over at a size that fits. 1024 wide lands around 130 KB as webp.
+ */
+export async function fetchImageRendition(
+  imageId: string,
+  width: number,
+  format: RenditionFormat = 'webp',
+): Promise<ImageRendition> {
+  const extension = format === 'jpeg' ? 'jpg' : 'webp';
+  const url = `${imageOrigin()}/thumb/${width}_w/${imageId}.${extension}`;
+  const response = await axios.get(url, { responseType: 'arraybuffer' });
+  const data = Buffer.from(response.data);
+  const contentType = String(response.headers['content-type'] || '').split(';')[0].trim();
+  return {
+    data,
+    mimeType: contentType || `image/${format}`,
+    bytes: data.length,
+    url,
+    width,
+    format,
+  };
 }
 
 export async function uploadImage(options: GyazoUploadOptions): Promise<GyazoImage> {

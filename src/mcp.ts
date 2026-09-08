@@ -12,7 +12,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { searchImages, getImageDetail, listImages, type GyazoImage } from './api';
+import {
+  searchImages,
+  getImageDetail,
+  listImages,
+  fetchImageRendition,
+  type GyazoImage,
+} from './api';
 import { resolveAccessToken } from './credentials';
 import { normalizeImageId, normalizeCollectionId } from './ids';
 import {
@@ -683,6 +689,79 @@ export function createMcpServer(): McpServer {
             : {}),
         })),
       );
+    }),
+  );
+
+  server.registerTool(
+    'gyazo_image_content',
+    {
+      title: 'Look at a Gyazo capture',
+      description:
+        'The pixels of one capture, as image content you can actually look at. Use it ' +
+        'after gyazo_recent or gyazo_image when the metadata is not enough and you need ' +
+        'to see what the user is looking at: a sign, a menu, a building. Returns a ' +
+        'width-limited rendition rather than the original, which is usually several ' +
+        'megabytes. One capture at a time: for a set, read the metadata first and ask ' +
+        'for the ones that matter.',
+      inputSchema: {
+        id_or_url: z
+          .string()
+          .min(1)
+          .describe('ID or URL of the capture on Gyazo'),
+        width: z
+          .number()
+          .int()
+          .min(64)
+          .max(2000)
+          .default(1024)
+          .describe('Width in pixels. 1024 is legible for signs and menus; 512 is cheaper'),
+        format: z
+          .enum(['webp', 'jpeg'])
+          .default('webp')
+          .describe('webp is about a third the size of jpeg for the same width'),
+        max_bytes: z
+          .number()
+          .int()
+          .min(10_000)
+          .max(4_000_000)
+          .default(750_000)
+          .describe('Refuse rather than return anything larger than this'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    logged('gyazo_image_content', async ({ id_or_url, width, format, max_bytes: maxBytes }) => {
+      const imageId = normalizeImageId(id_or_url);
+      if (!imageId) {
+        throw new Error(
+          `'${id_or_url}' is not a Gyazo image ID or URL. Pass a 32-character ID or a ` +
+            'https://gyazo.com/<id> URL.',
+        );
+      }
+
+      const rendition = await fetchImageRendition(imageId, width, format);
+      if (rendition.bytes > maxBytes) {
+        throw new Error(
+          `The ${width}px ${format} rendition of ${imageId} is ${rendition.bytes} bytes, over ` +
+            `the max_bytes limit of ${maxBytes}. Ask for a smaller width, or raise max_bytes. ` +
+            `The rendition is at ${rendition.url}.`,
+        );
+      }
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text:
+              `${imageId} at ${rendition.width}px wide, ${rendition.bytes} bytes as ` +
+              `${rendition.mimeType}. This is a resized rendition, not the original.`,
+          },
+          {
+            type: 'image' as const,
+            data: rendition.data.toString('base64'),
+            mimeType: rendition.mimeType,
+          },
+        ],
+      };
     }),
   );
 

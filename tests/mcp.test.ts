@@ -29,6 +29,7 @@ function startMcpServer(
   options: {
     apiOrigin?: string;
     webOrigin?: string;
+    imageOrigin?: string;
     noToken?: boolean;
     args?: string[];
   } = {},
@@ -42,6 +43,7 @@ function startMcpServer(
   if (options.noToken) delete env.GYAZO_ACCESS_TOKEN;
   if (options.apiOrigin) env.GYAZO_API_ORIGIN = options.apiOrigin;
   if (options.webOrigin) env.GYAZO_WEB_ORIGIN = options.webOrigin;
+  if (options.imageOrigin) env.GYAZO_IMAGE_ORIGIN = options.imageOrigin;
 
   const child: ChildProcessWithoutNullStreams = spawn(
     process.execPath,
@@ -374,6 +376,7 @@ test('tools/list offers the read-only tools and nothing that writes', async () =
       'gyazo_collection',
       'gyazo_collections',
       'gyazo_image',
+      'gyazo_image_content',
       'gyazo_latest_image',
       'gyazo_list',
       'gyazo_recent',
@@ -935,6 +938,115 @@ test('the OCR text comes through from wherever the response carries it', async (
     for (const [key, value] of Object.entries(image)) {
       expect(value, `${key} should be omitted rather than null`).not.toBeNull();
     }
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+// --- image content ---------------------------------------------------------
+
+/** Serves the sized rendition route, and the image detail beside it. */
+function renditionStub(bytes: Buffer, contentType = 'image/webp'): StubHandler {
+  return (req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    if (url.pathname.startsWith('/thumb/')) {
+      res.writeHead(200, { 'Content-Type': contentType, 'Content-Length': String(bytes.length) });
+      res.end(bytes);
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(PHONE_PHOTO));
+  };
+}
+
+test('gyazo_image_content returns the pixels as image content', async () => {
+  const cacheDir = createTempCacheDir();
+  const bytes = Buffer.from('pretend this is a webp'.repeat(10));
+  const stub = await startStubServer(renditionStub(bytes));
+  const session = startMcpServer(cacheDir, { imageOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_image_content',
+      arguments: { id_or_url: PHONE_PHOTO.image_id },
+    });
+    expect(response.result.isError).toBeFalsy();
+
+    const image = response.result.content.find((part: any) => part.type === 'image');
+    expect(image).toBeDefined();
+    expect(image.mimeType).toBe('image/webp');
+    expect(Buffer.from(image.data, 'base64').toString()).toBe(bytes.toString());
+
+    // And a line of text saying what was actually sent.
+    const note = response.result.content.find((part: any) => part.type === 'text');
+    expect(note.text).toMatch(/1024/);
+    expect(note.text).toMatch(new RegExp(PHONE_PHOTO.image_id));
+
+    const asked = stub.requests.find((request) => request.url.startsWith('/thumb/'));
+    expect(asked!.url).toBe(`/thumb/1024_w/${PHONE_PHOTO.image_id}.webp`);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_image_content takes a width and a format', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(renditionStub(Buffer.from('jpeg bytes'), 'image/jpeg'));
+  const session = startMcpServer(cacheDir, { imageOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_image_content',
+      arguments: { id_or_url: PHONE_PHOTO.image_id, width: 512, format: 'jpeg' },
+    });
+    const image = response.result.content.find((part: any) => part.type === 'image');
+    expect(image.mimeType).toBe('image/jpeg');
+    const asked = stub.requests.find((request) => request.url.startsWith('/thumb/'));
+    expect(asked!.url).toBe(`/thumb/512_w/${PHONE_PHOTO.image_id}.jpg`);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_image_content refuses rather than sending something too large', async () => {
+  const cacheDir = createTempCacheDir();
+  const big = Buffer.alloc(300_000, 1);
+  const stub = await startStubServer(renditionStub(big));
+  const session = startMcpServer(cacheDir, { imageOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_image_content',
+      arguments: { id_or_url: PHONE_PHOTO.image_id, max_bytes: 100_000 },
+    });
+    const failed = Boolean(response.error) || response.result?.isError === true;
+    expect(failed).toBe(true);
+    const text = JSON.stringify(response.result ?? response.error);
+    // Says how big it was, and how to get something smaller.
+    expect(text).toMatch(/300000|300,000/);
+    expect(text).toMatch(/width/i);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_image_content rejects something that is not a Gyazo image', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(renditionStub(Buffer.from('x')));
+  const session = startMcpServer(cacheDir, { imageOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_image_content',
+      arguments: { id_or_url: 'https://example.com/cat.png' },
+    });
+    const failed = Boolean(response.error) || response.result?.isError === true;
+    expect(failed).toBe(true);
+    expect(stub.requests).toHaveLength(0);
   } finally {
     await session.close();
     await stub.close();
