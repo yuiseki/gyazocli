@@ -514,3 +514,67 @@ export async function listCaptures(options: ListCapturesOptions): Promise<ListCa
 
   return { images: await listImages(pageNumber, limit) };
 }
+
+export interface RecentCapturesOptions {
+  /** Only captures uploaded at or after this instant. */
+  since?: Date;
+  /** Only captures newer than this one, which is itself excluded. */
+  afterImageId?: string;
+  limit: number;
+  maxPages: number;
+}
+
+export interface RecentCapturesResult {
+  images: any[];
+  pagesWalked: number;
+  /** A watermark was asked for and never seen inside the pages walked. */
+  watermarkMissing?: boolean;
+}
+
+/**
+ * What arrived since a moment, or since a capture. The listing comes back
+ * newest first, so the walk stops at the first capture that is older than the
+ * boundary rather than reading to the end.
+ *
+ * A watermark that never turns up is reported, not papered over: returning
+ * everything walked would read as "all of this is new", which is the wrong
+ * answer told confidently.
+ */
+export async function listCapturesSince(
+  options: RecentCapturesOptions,
+): Promise<RecentCapturesResult> {
+  const { since, afterImageId, limit, maxPages } = options;
+  const collected: any[] = [];
+  let pagesWalked = 0;
+  let reachedBoundary = false;
+
+  for (let page = 1; page <= maxPages && !reachedBoundary; page++) {
+    const images = await listImages(page, 100);
+    pagesWalked = page;
+    if (images.length === 0) break;
+
+    for (const image of images) {
+      if (afterImageId && image.image_id === afterImageId) {
+        reachedBoundary = true;
+        break;
+      }
+      if (since) {
+        const createdAt = new Date(image.created_at);
+        if (Number.isNaN(createdAt.getTime())) continue;
+        if (createdAt < since) {
+          reachedBoundary = true;
+          break;
+        }
+      }
+      collected.push(image);
+    }
+
+    if (images.length < 100) break;
+  }
+
+  if (afterImageId && !reachedBoundary) {
+    return { images: [], pagesWalked, watermarkMissing: true };
+  }
+
+  return { images: collected.slice(0, limit), pagesWalked };
+}

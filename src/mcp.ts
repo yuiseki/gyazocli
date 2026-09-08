@@ -22,7 +22,7 @@ import {
   tryParseDateOption,
   type ParsedDateOption,
 } from './dates';
-import { listCaptures, type CaptureAlias } from './services/memory';
+import { listCaptures, listCapturesSince, type CaptureAlias } from './services/memory';
 import { buildSummary, toSummaryJson } from './services/analytics';
 import { COLLECTION_SORTS, readCollection, type CollectionSort } from './services/collections';
 
@@ -449,6 +449,97 @@ export function createMcpServer(): McpServer {
         ...(collection?.user !== undefined ? { user: collection.user } : {}),
         images: images.map(toMetadata),
       });
+    }),
+  );
+
+  server.registerTool(
+    'gyazo_recent',
+    {
+      title: 'What the user captured recently',
+      description:
+        'The captures that arrived since a moment, or since a capture you have already ' +
+        'seen. Use this when the user says they just captured something, and pass ' +
+        'after_image_id with the newest capture you have already looked at so that you ' +
+        'get only what is new. With no arguments it covers the last 30 minutes.',
+      inputSchema: {
+        minutes: z
+          .number()
+          .int()
+          .min(1)
+          .max(1440)
+          .optional()
+          .describe('How far back to look, in minutes. Defaults to 30 when nothing else is given'),
+        since: z
+          .string()
+          .optional()
+          .describe('An ISO 8601 timestamp to look back to, instead of minutes'),
+        after_image_id: z
+          .string()
+          .optional()
+          .describe(
+            'The newest capture you have already seen, as an ID or a Gyazo URL. Returns ' +
+              'only what came after it, and reports if it cannot be found',
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .default(20)
+          .describe('Most captures to return (max: 100)'),
+        max_pages: z
+          .number()
+          .int()
+          .min(1)
+          .max(20)
+          .default(5)
+          .describe('How many pages of 100 to walk before giving up on the boundary'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    logged('gyazo_recent', async (args) => {
+      const { limit, max_pages: maxPages } = args;
+
+      let afterImageId: string | undefined;
+      if (args.after_image_id) {
+        const normalized = normalizeImageId(args.after_image_id);
+        if (!normalized) {
+          throw new Error(
+            `'${args.after_image_id}' is not a Gyazo image ID or URL. Pass the ID of the ` +
+              'newest capture you have already seen.',
+          );
+        }
+        afterImageId = normalized;
+      }
+
+      let since: Date | undefined;
+      if (args.since) {
+        if (args.minutes !== undefined) {
+          throw new Error('since and minutes cannot be used together.');
+        }
+        const parsed = new Date(args.since);
+        if (Number.isNaN(parsed.getTime())) {
+          throw new Error(
+            `'${args.since}' is not a timestamp this can read. Pass an ISO 8601 value such ` +
+              'as 2026-09-08T11:42:00+09:00.',
+          );
+        }
+        since = parsed;
+      } else if (args.minutes !== undefined) {
+        since = new Date(Date.now() - args.minutes * 60_000);
+      } else if (!afterImageId) {
+        since = new Date(Date.now() - 30 * 60_000);
+      }
+
+      const result = await listCapturesSince({ since, afterImageId, limit, maxPages });
+      if (result.watermarkMissing) {
+        throw new Error(
+          `after_image_id ${afterImageId} was not found in the ${result.pagesWalked} most ` +
+            'recent pages of captures. It may be older than that, or belong to another ' +
+            'account. Ask for a window in minutes instead, or raise max_pages.',
+        );
+      }
+      return asMetadataListResult(result.images);
     }),
   );
 

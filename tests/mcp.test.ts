@@ -375,6 +375,7 @@ test('tools/list offers the read-only tools and nothing that writes', async () =
       'gyazo_image',
       'gyazo_latest_image',
       'gyazo_list',
+      'gyazo_recent',
       'gyazo_search',
       'gyazo_summary',
     ]);
@@ -920,6 +921,172 @@ test('the OCR text comes through from wherever the response carries it', async (
     for (const [key, value] of Object.entries(image)) {
       expect(value, `${key} should be omitted rather than null`).not.toBeNull();
     }
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+// --- differential retrieval -------------------------------------------------
+
+/** Newest first, as the API returns them, one minute apart. */
+function timeline(count: number, startMinutesAgo: number, prefix = 'ee') {
+  const now = Date.now();
+  return Array.from({ length: count }, (_, index) => {
+    const at = new Date(now - (startMinutesAgo + index) * 60_000);
+    const id = `${prefix}${String(index).padStart(32 - prefix.length, '0')}`;
+    return {
+      image_id: id,
+      permalink_url: `https://gyazo.com/${id}`,
+      url: `https://i.gyazo.com/${id}.jpg`,
+      type: 'jpg',
+      created_at: at.toISOString(),
+      metadata: { app: 'Gyazo Android', title: `capture ${index}` },
+    };
+  });
+}
+
+/** Serves /api/images a page at a time, so the walk can be observed. */
+function pagedListStub(images: any[]): StubHandler {
+  return (req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url.pathname !== '/api/images') {
+      res.end(JSON.stringify([]));
+      return;
+    }
+    const page = Number(url.searchParams.get('page') || '1');
+    const per = Number(url.searchParams.get('per_page') || '100');
+    res.end(JSON.stringify(images.slice((page - 1) * per, page * per)));
+  };
+}
+
+test('gyazo_recent returns only what arrived inside the window', async () => {
+  const cacheDir = createTempCacheDir();
+  // Three from the last few minutes, then a gap, so the boundary never lands
+  // on a capture and the test does not depend on how long it takes to run.
+  const inside = timeline(3, 1, 'aa');
+  const outside = timeline(4, 60, 'bb');
+  const stub = await startStubServer(pagedListStub([...inside, ...outside]));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_recent',
+      arguments: { minutes: 10 },
+    });
+    expect(response.result.isError).toBeFalsy();
+    const found = JSON.parse(response.result.content[0].text);
+    expect(found.map((image: any) => image.image_id)).toEqual(
+      inside.map((image) => image.image_id),
+    );
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_recent stops walking once it is past the window', async () => {
+  const cacheDir = createTempCacheDir();
+  const images = timeline(250, 1);
+  const stub = await startStubServer(pagedListStub(images));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    await session.request('tools/call', { name: 'gyazo_recent', arguments: { minutes: 3 } });
+    const pages = stub.requests.filter((request) => request.url.startsWith('/api/images'));
+    // Everything it needs is on the first page, so it must not ask for a second.
+    expect(pages).toHaveLength(1);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_recent takes a watermark image and returns what came after it', async () => {
+  const cacheDir = createTempCacheDir();
+  const images = timeline(10, 1);
+  const stub = await startStubServer(pagedListStub(images));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_recent',
+      arguments: { after_image_id: images[3].image_id },
+    });
+    const found = JSON.parse(response.result.content[0].text);
+    expect(found.map((image: any) => image.image_id)).toEqual(
+      images.slice(0, 3).map((image) => image.image_id),
+    );
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_recent says so when the watermark is out of reach', async () => {
+  const cacheDir = createTempCacheDir();
+  const images = timeline(10, 1);
+  const stub = await startStubServer(pagedListStub(images));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_recent',
+      arguments: { after_image_id: 'ff000000000000000000000000000099' },
+    });
+    // Returning everything walked would read as "all of this is new", which is
+    // worse than saying the watermark was not found.
+    const failed = Boolean(response.error) || response.result?.isError === true;
+    expect(failed).toBe(true);
+    const text = JSON.stringify(response.result ?? response.error);
+    expect(text).toMatch(/not found/i);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_recent accepts an explicit since timestamp', async () => {
+  const cacheDir = createTempCacheDir();
+  const images = timeline(10, 1);
+  const stub = await startStubServer(pagedListStub(images));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const since = images[2].created_at;
+    const response = await session.request('tools/call', {
+      name: 'gyazo_recent',
+      arguments: { since },
+    });
+    const found = JSON.parse(response.result.content[0].text);
+    expect(found.map((image: any) => image.image_id)).toEqual(
+      images.slice(0, 3).map((image) => image.image_id),
+    );
+
+    const bad = await session.request('tools/call', {
+      name: 'gyazo_recent',
+      arguments: { since: 'yesterday' },
+    });
+    const failed = Boolean(bad.error) || bad.result?.isError === true;
+    expect(failed).toBe(true);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_recent says when nothing arrived', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(pagedListStub(timeline(5, 120)));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_recent',
+      arguments: { minutes: 10 },
+    });
+    expect(response.result.content[0].text).toMatch(/no images found/i);
   } finally {
     await session.close();
     await stub.close();
