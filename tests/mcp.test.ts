@@ -818,6 +818,36 @@ test('gyazo_collection refuses an image URL', async () => {
   }
 });
 
+test('every call is logged on stderr with how long it took', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(searchStub(IMAGES));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    await session.request('tools/call', {
+      name: 'gyazo_search',
+      arguments: { query: 'cat' },
+    });
+    await session.request('tools/call', {
+      name: 'gyazo_image',
+      arguments: { id_or_url: 'not-an-id' },
+    });
+    // The child writes as it goes, so give the pipe a moment to drain.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const stderr = session.stderr();
+    expect(stderr).toMatch(/\[gyazo-mcp\] gyazo_search ok \d+ms query="cat"/);
+    expect(stderr).toMatch(/\[gyazo-mcp\] gyazo_image failed \d+ms/);
+    // Never on stdout, which belongs to the protocol.
+    for (const line of session.stdoutLines()) {
+      expect(line).not.toContain('[gyazo-mcp]');
+    }
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
 test.each(['--mcp', 'mcp', 'mcp-server'])('%s starts the server too', async (arg) => {
   const session = startMcpServer(createTempCacheDir(), { args: [arg] });
   try {

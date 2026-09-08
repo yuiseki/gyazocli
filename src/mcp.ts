@@ -72,6 +72,35 @@ function toMetadata(
 
 const NO_IMAGES = { content: [{ type: 'text' as const, text: 'No images found' }] };
 
+/**
+ * Every call, with how long it took, on stderr. stdout belongs to the
+ * protocol, and the host that starts this server is where its stderr ends up,
+ * which is the only place an operator can see that one tool is slow.
+ */
+function logged<Args, Result>(
+  name: string,
+  handler: (args: Args) => Promise<Result>,
+): (args: Args) => Promise<Result> {
+  return async (args: Args) => {
+    const startedAt = Date.now();
+    const given = Object.entries((args || {}) as Record<string, unknown>)
+      .filter(([, value]) => value !== undefined && value !== false)
+      .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+      .join(' ');
+    try {
+      const result = await handler(args);
+      console.error(`[gyazo-mcp] ${name} ok ${Date.now() - startedAt}ms ${given}`.trimEnd());
+      return result;
+    } catch (error: any) {
+      console.error(
+        `[gyazo-mcp] ${name} failed ${Date.now() - startedAt}ms ${given}`.trimEnd(),
+        `- ${error?.message || error}`,
+      );
+      throw error;
+    }
+  };
+}
+
 function asJsonResult(payload: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }] };
 }
@@ -127,7 +156,7 @@ export function createMcpServer(): McpServer {
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ query, page, per }) => {
+    logged('gyazo_search', async ({ query, page, per }) => {
       const images = await searchImages(query, page, per);
       if (!images || images.length === 0) {
         return NO_IMAGES;
@@ -140,7 +169,7 @@ export function createMcpServer(): McpServer {
           },
         ],
       };
-    },
+    }),
   );
 
   server.registerTool(
@@ -162,7 +191,7 @@ export function createMcpServer(): McpServer {
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ id_or_url }) => {
+    logged('gyazo_image', async ({ id_or_url }) => {
       const imageId = normalizeImageId(id_or_url);
       if (!imageId) {
         throw new Error(
@@ -176,7 +205,7 @@ export function createMcpServer(): McpServer {
         return NO_IMAGES;
       }
       return asMetadataResult(image);
-    },
+    }),
   );
 
   server.registerTool(
@@ -192,14 +221,14 @@ export function createMcpServer(): McpServer {
       inputSchema: {},
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async () => {
+    logged('gyazo_latest_image', async () => {
       const images = await listImages(1, 1);
       const latest = images && images[0];
       if (!latest) {
         return NO_IMAGES;
       }
       return asMetadataResult(latest);
-    },
+    }),
   );
 
   server.registerTool(
@@ -254,7 +283,7 @@ export function createMcpServer(): McpServer {
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async (args) => {
+    logged('gyazo_list', async (args) => {
       const { page, limit, today, photos, uploaded, max_pages: maxPages, use_cache: useCache } = args;
 
       if (photos && uploaded) {
@@ -284,7 +313,7 @@ export function createMcpServer(): McpServer {
         alias,
       });
       return asMetadataListResult(images);
-    },
+    }),
   );
 
   server.registerTool(
@@ -321,12 +350,12 @@ export function createMcpServer(): McpServer {
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async (args) => {
+    logged('gyazo_summary', async (args) => {
       const { today, limit, max_pages: maxPages, use_cache: useCache } = args;
       const targetDate = requireDate(args.date, today) || buildRecentWeekRangeUntilYesterday();
       const dailySummaries = await buildSummary({ targetDate, maxPages, useCache });
       return asJsonResult(toSummaryJson(targetDate.dateKey, dailySummaries, limit));
-    },
+    }),
   );
 
   server.registerTool(
@@ -352,7 +381,7 @@ export function createMcpServer(): McpServer {
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ id_or_url, sort }) => {
+    logged('gyazo_collection', async ({ id_or_url, sort }) => {
       const collectionId = normalizeCollectionId(id_or_url);
       if (!collectionId) {
         throw new Error(
@@ -376,7 +405,7 @@ export function createMcpServer(): McpServer {
         ...(collection?.user !== undefined ? { user: collection.user } : {}),
         images: images.map(toMetadata),
       });
-    },
+    }),
   );
 
   return server;
