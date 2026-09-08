@@ -338,3 +338,20 @@ export function normalizeRankingValues(values: string[]): string[] {
   }
   return Array.from(uniqueByLower.values());
 }
+
+export function shouldEnrichForLocationDisplay(img: any): boolean {
+  const locationLabel = sanitizeSummaryText(extractImageLocationLabel(img));
+  return !locationLabel;
+}
+
+export function mergeImageForDisplay(base: any, detail: any): any {
+  return {
+    ...base,
+    ...detail,
+    metadata: {
+      ...(base?.metadata || {}),
+      ...(detail?.metadata || {}),
+    },
+    ocr: detail?.ocr ?? base?.ocr,
+  };
+}
