@@ -120,11 +120,23 @@ Configured in a client:
   (required, up to 200 characters), `page` (default 1), `per` (default 20,
   max 100). Search syntax is the same as Gyazo's: `cat`, `title:cat`,
   `app:"Google Chrome"`, `url:google.com`, `cat since:2024-01-01 until:2024-12-31`.
+- `gyazo_image`: metadata for one capture. Argument: `id_or_url` (required),
+  which accepts a bare 32-character ID, a `https://gyazo.com/<id>` permalink or
+  a direct image URL.
+- `gyazo_latest_image`: metadata for the capture uploaded most recently. No
+  arguments.
 
-The tool name and its arguments follow
+All three are read-only, and all three return metadata rather than image
+bytes: URLs, timestamp, OCR text, title, source application and page, and
+location when the capture carries one. Use the URLs in a result to show the
+capture itself. Handing base64 image data to a model turned out not to work
+well in practice, and describing a capture does.
+
+Tool names and arguments follow
 [nota/gyazo-mcp-server](https://github.com/nota/gyazo-mcp-server), so a client
-already configured against that server can point at this one instead. Only
-`gyazo_search` is implemented so far.
+already configured against that server can point at this one instead. Its
+`gyazo_upload` is deliberately absent: nothing here can write to your Gyazo
+account until there is a reason for it to.
 
 ## Development
 

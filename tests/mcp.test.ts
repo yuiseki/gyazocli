@@ -80,7 +80,7 @@ function startMcpServer(
       return new Promise((resolve, reject) => {
         const timer = setTimeout(
           () => reject(new Error(`timed out waiting for ${method}; stderr: ${stderr}`)),
-          10000,
+          4000,
         );
         pending.set(id, (message) => {
           clearTimeout(timer);
@@ -311,6 +311,198 @@ test('the server exits with a hint when no token is configured', async () => {
   await session.close();
   expect(session.stderr()).toMatch(/access token/i);
   expect(session.stdoutLines()).toHaveLength(0);
+});
+
+const DETAIL = {
+  image_id: 'bb000000000000000000000000000001',
+  permalink_url: 'https://gyazo.com/bb000000000000000000000000000001',
+  url: 'https://i.gyazo.com/bb000000000000000000000000000001.png',
+  thumb_url: 'https://thumb.gyazo.com/thumb/bb000000000000000000000000000001',
+  type: 'png',
+  created_at: '2026-02-22T02:34:56+0900',
+  alt_text: 'a station sign',
+  ocr: { locale: 'ja', description: '京都' },
+  metadata: { app: 'Safari', title: 'Kyoto', url: 'https://example.com/kyoto' },
+  exif_normalized: { latitude: 34.9858, longitude: 135.7588 },
+};
+
+/** Serves image detail and the image list, so both tools can be exercised. */
+function imageStub(detail: unknown, list: unknown[]): StubHandler {
+  return (req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url.pathname === '/api/images') {
+      res.end(JSON.stringify(list));
+      return;
+    }
+    if (url.pathname.startsWith('/api/images/')) {
+      res.end(JSON.stringify(detail));
+      return;
+    }
+    res.writeHead(404);
+    res.end(JSON.stringify({ message: 'not found' }));
+  };
+}
+
+test('tools/list offers the read-only tools and nothing that writes', async () => {
+  const session = startMcpServer(createTempCacheDir());
+  try {
+    await initialize(session);
+    const response = await session.request('tools/list');
+    const names = response.result.tools.map((tool: any) => tool.name).sort();
+    expect(names).toEqual(['gyazo_image', 'gyazo_latest_image', 'gyazo_search']);
+    for (const tool of response.result.tools) {
+      expect(tool.annotations?.readOnlyHint).toBe(true);
+    }
+  } finally {
+    await session.close();
+  }
+});
+
+test('gyazo_image returns metadata, and no image bytes', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(imageStub(DETAIL, []));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_image',
+      arguments: { id_or_url: DETAIL.image_id },
+    });
+    expect(response.result.isError).toBeFalsy();
+    expect(response.result.content).toHaveLength(1);
+    expect(response.result.content[0].type).toBe('text');
+
+    const text = response.result.content[0].text;
+    // Deliberately metadata only: base64 image content did not survive real use.
+    expect(text).not.toContain('data:image');
+    expect(text).not.toContain('base64');
+
+    const image = JSON.parse(text);
+    expect(image.image_id).toBe(DETAIL.image_id);
+    expect(image.permalink_url).toBe(DETAIL.permalink_url);
+    expect(image.thumb_url).toBe(DETAIL.thumb_url);
+    expect(image.mimeType).toBe('image/png');
+    expect(image.ocr).toEqual(DETAIL.ocr);
+    expect(image.metadata.title).toBe('Kyoto');
+    expect(image.exif_normalized).toEqual(DETAIL.exif_normalized);
+    expect(image.data).toBeUndefined();
+
+    const detailRequest = stub.requests.find((request) => request.url.startsWith('/api/images/'));
+    expect(detailRequest).toBeDefined();
+    expect(detailRequest!.url).toContain(DETAIL.image_id);
+    expect(detailRequest!.authorization).toBe('Bearer test-token');
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_image accepts a permalink and a direct image URL', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(imageStub(DETAIL, []));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    for (const input of [
+      `https://gyazo.com/${DETAIL.image_id}`,
+      `https://i.gyazo.com/${DETAIL.image_id}.png`,
+      DETAIL.image_id.toUpperCase(),
+    ]) {
+      const response = await session.request('tools/call', {
+        name: 'gyazo_image',
+        arguments: { id_or_url: input },
+      });
+      expect(response.result.isError, `input ${input}`).toBeFalsy();
+      expect(JSON.parse(response.result.content[0].text).image_id).toBe(DETAIL.image_id);
+    }
+    const detailRequests = stub.requests.filter((request) =>
+      request.url.startsWith(`/api/images/${DETAIL.image_id}`),
+    );
+    expect(detailRequests).toHaveLength(3);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_image rejects something that is not a Gyazo image without calling the API', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(imageStub(DETAIL, []));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_image',
+      arguments: { id_or_url: 'https://example.com/not-gyazo' },
+    });
+    const failed = Boolean(response.error) || response.result?.isError === true;
+    expect(failed).toBe(true);
+    expect(stub.requests).toHaveLength(0);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_latest_image returns the newest capture', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(imageStub(DETAIL, [IMAGES[1], IMAGES[0]]));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_latest_image',
+      arguments: {},
+    });
+    expect(response.result.isError).toBeFalsy();
+    const image = JSON.parse(response.result.content[0].text);
+    expect(image.image_id).toBe(IMAGES[1].image_id);
+
+    const listRequest = stub.requests.find((request) => request.url.startsWith('/api/images?'));
+    expect(listRequest).toBeDefined();
+    const params = new URL(listRequest!.url, 'http://127.0.0.1').searchParams;
+    expect(params.get('page')).toBe('1');
+    expect(params.get('per_page')).toBe('1');
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_latest_image tolerates the argument the upstream server declared', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(imageStub(DETAIL, [IMAGES[0]]));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_latest_image',
+      arguments: { name: 'gyazo_latest_image' },
+    });
+    expect(response.result.isError).toBeFalsy();
+    expect(JSON.parse(response.result.content[0].text).image_id).toBe(IMAGES[0].image_id);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_latest_image says so when there is nothing there', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(imageStub(DETAIL, []));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_latest_image',
+      arguments: {},
+    });
+    expect(response.result.content[0].text).toMatch(/no images found/i);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
 });
 
 test.each(['--mcp', 'mcp', 'mcp-server'])('%s starts the server too', async (arg) => {

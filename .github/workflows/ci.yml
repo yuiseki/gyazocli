@@ -69,3 +69,5 @@ jobs:
           cat handshake.jsonl
           grep -q '"name":"gyazocli"' handshake.jsonl
           grep -q '"gyazo_search"' handshake.jsonl
+          grep -q '"gyazo_image"' handshake.jsonl
+          grep -q '"gyazo_latest_image"' handshake.jsonl

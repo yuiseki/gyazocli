@@ -16,86 +16,17 @@ import {
   type HourlyMetadataKind,
 } from './storage';
 import { ensureAccessToken, resolveAccessToken, getStoredConfig, setStoredConfig } from './credentials';
+import { normalizeImageId, normalizeCollectionId } from './ids';
+
+// Re-exported: these used to live here, and the shorthand tests reach for them.
+export { normalizeImageId, normalizeCollectionId };
 
 const program = new Command();
 const UPLOAD_DESC_TAG = '#gyazocli_uploads';
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-const IMAGE_ID_PATTERN = /^[0-9a-f]{32}$/i;
-const GYAZO_HOST_PATTERN = /(^|\.)gyazo\.com$/i;
-
-/**
- * Accept either a bare Gyazo image id (32 hex characters) or any Gyazo URL that
- * carries one, and return the canonical lowercase id. Returns null otherwise.
- */
-export function normalizeImageId(input: string): string | null {
-  const trimmed = (input || '').trim();
-  if (!trimmed) return null;
-
-  if (IMAGE_ID_PATTERN.test(trimmed)) {
-    return trimmed.toLowerCase();
-  }
-
-  if (!/^https?:\/\//i.test(trimmed)) {
-    return null;
-  }
-
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    return null;
-  }
-  if (!GYAZO_HOST_PATTERN.test(url.hostname)) {
-    return null;
-  }
-
-  const segments = url.pathname.split('/').filter(Boolean);
-  const lastSegment = segments[segments.length - 1];
-  if (!lastSegment) return null;
-  // /collections/<id> is a collection, not an image.
-  if (segments[segments.length - 2] === 'collections') return null;
-  const withoutExtension = lastSegment.replace(/\.[a-z0-9]+$/i, '');
-  return IMAGE_ID_PATTERN.test(withoutExtension) ? withoutExtension.toLowerCase() : null;
-}
-
 const COLLECTION_SORTS = ['added', 'created', 'captured'] as const;
 type CollectionSort = (typeof COLLECTION_SORTS)[number];
-
-/**
- * A collection ID looks exactly like an image ID (32 hex characters), so only
- * the URL form tells the two apart. `/collections/<id>` is a collection;
- * `/<id>` is an image.
- */
-export function normalizeCollectionId(input: string): string | null {
-  const trimmed = (input || '').trim();
-  if (!trimmed) return null;
-
-  if (IMAGE_ID_PATTERN.test(trimmed)) {
-    return trimmed.toLowerCase();
-  }
-
-  if (!/^https?:\/\//i.test(trimmed)) {
-    return null;
-  }
-
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    return null;
-  }
-  if (!GYAZO_HOST_PATTERN.test(url.hostname)) {
-    return null;
-  }
-
-  const segments = url.pathname.split('/').filter(Boolean);
-  if (segments.length < 2 || segments[segments.length - 2] !== 'collections') {
-    return null;
-  }
-  const withoutExtension = segments[segments.length - 1].replace(/\.[a-z0-9]+$/i, '');
-  return IMAGE_ID_PATTERN.test(withoutExtension) ? withoutExtension.toLowerCase() : null;
-}
 
 function requireCollectionId(input: string): string {
   const collectionId = normalizeCollectionId(input);
