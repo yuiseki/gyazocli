@@ -6,6 +6,8 @@ Accepted
 ## Context
 The current `gyazocli` implementation uses flat top-level commands (not nested under `images`). Documentation should reflect the command tree implemented in `src/index.ts`.
 
+The commands are defined in `src/index.ts`; what they call lives in the modules described in [ADR 005](005-module-layout.md).
+
 ## Decision
 Adopt and document the existing top-level command structure.
 
