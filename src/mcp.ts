@@ -14,7 +14,17 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { searchImages, getImageDetail, listImages, type GyazoImage } from './api';
 import { resolveAccessToken } from './credentials';
-import { normalizeImageId } from './ids';
+import { normalizeImageId, normalizeCollectionId } from './ids';
+import {
+  DATE_OPTION_PROBLEMS,
+  buildRecentWeekRangeUntilYesterday,
+  parseHourOption,
+  tryParseDateOption,
+  type ParsedDateOption,
+} from './dates';
+import { listCaptures, type CaptureAlias } from './services/memory';
+import { buildSummary, toSummaryJson } from './services/analytics';
+import { COLLECTION_SORTS, readCollection, type CollectionSort } from './services/collections';
 
 const SEARCH_QUERY_DESCRIPTION = [
   'Search keyword (max length: 200 characters).',
@@ -61,6 +71,34 @@ function toMetadata(
 }
 
 const NO_IMAGES = { content: [{ type: 'text' as const, text: 'No images found' }] };
+
+function asJsonResult(payload: unknown) {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }] };
+}
+
+function asMetadataListResult(images: any[]) {
+  if (!images || images.length === 0) {
+    return NO_IMAGES;
+  }
+  return asJsonResult(images.map(toMetadata));
+}
+
+/**
+ * A date argument, refused by throwing. The CLI reports and exits here, which
+ * a server must not do: it would take the whole session down over one bad
+ * argument.
+ */
+function requireDate(value: string | undefined, today: boolean): ParsedDateOption | undefined {
+  if (!value && !today) return undefined;
+  if (value && today) {
+    throw new Error('today and date cannot be used together.');
+  }
+  const parsed = tryParseDateOption(today ? undefined : value);
+  if (!parsed.ok) {
+    throw new Error(DATE_OPTION_PROBLEMS[parsed.problem].replace('--date', 'date'));
+  }
+  return parsed.value;
+}
 
 function asMetadataResult(image: Parameters<typeof toMetadata>[0]) {
   return {
@@ -161,6 +199,183 @@ export function createMcpServer(): McpServer {
         return NO_IMAGES;
       }
       return asMetadataResult(latest);
+    },
+  );
+
+  server.registerTool(
+    'gyazo_list',
+    {
+      title: 'List Gyazo captures',
+      description:
+        'List the captures the user uploaded, newest first, taking the same options as ' +
+        '`gyazo list`. With no arguments it returns the most recent page. Returns metadata, ' +
+        'not image bytes.',
+      inputSchema: {
+        page: z.number().int().min(1).default(1).describe('Page number for pagination'),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .default(20)
+          .describe('Number of captures per page (max: 100)'),
+        date: z
+          .string()
+          .optional()
+          .describe(
+            'Restrict to a date or range: yyyy, yyyy-mm or yyyy-mm-dd, read as local time',
+          ),
+        today: z.boolean().default(false).describe('Restrict to today. Not with date'),
+        hour: z
+          .string()
+          .optional()
+          .describe(
+            'Read one hour out of the local cache, as yyyy-mm-dd-hh. Not with date, today, ' +
+              'photos or uploaded',
+          ),
+        photos: z
+          .boolean()
+          .default(false)
+          .describe('Only captures that carry a location. Not with uploaded'),
+        uploaded: z
+          .boolean()
+          .default(false)
+          .describe('Only captures uploaded by this CLI. Not with photos'),
+        max_pages: z
+          .number()
+          .int()
+          .min(1)
+          .default(100)
+          .describe('How many API pages to scan when a date range is given'),
+        use_cache: z
+          .boolean()
+          .default(true)
+          .describe('Answer from the local cache where possible. Set false to force a fetch'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      const { page, limit, today, photos, uploaded, max_pages: maxPages, use_cache: useCache } = args;
+
+      if (photos && uploaded) {
+        throw new Error('photos and uploaded cannot be used together.');
+      }
+      if (args.hour && (photos || uploaded)) {
+        throw new Error('hour cannot be used with photos or uploaded.');
+      }
+      if (args.hour && (args.date || today)) {
+        throw new Error('hour cannot be used with date or today.');
+      }
+
+      const date = requireDate(args.date, today);
+      const hour = args.hour ? parseHourOption(args.hour) : null;
+      if (args.hour && !hour) {
+        throw new Error('hour format must be yyyy-mm-dd-hh.');
+      }
+
+      const alias: CaptureAlias | undefined = photos ? 'photos' : uploaded ? 'uploaded' : undefined;
+      const { images } = await listCaptures({
+        page,
+        limit,
+        maxPages,
+        useCache,
+        date,
+        hour: hour || undefined,
+        alias,
+      });
+      return asMetadataListResult(images);
+    },
+  );
+
+  server.registerTool(
+    'gyazo_summary',
+    {
+      title: 'Summarise a stretch of Gyazo captures',
+      description:
+        'What a day or a range adds up to: how many captures each day, and which ' +
+        'applications, sites, tags and places recur, taking the same options as ' +
+        '`gyazo summary`. With no arguments it covers the week up to yesterday.',
+      inputSchema: {
+        date: z
+          .string()
+          .optional()
+          .describe('A date or range: yyyy, yyyy-mm or yyyy-mm-dd, read as local time'),
+        today: z.boolean().default(false).describe('Cover today only. Not with date'),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(10)
+          .default(10)
+          .describe('How many ranking rows per day (max: 10)'),
+        max_pages: z
+          .number()
+          .int()
+          .min(1)
+          .default(10)
+          .describe('How many API pages to scan when the cache has nothing to say'),
+        use_cache: z
+          .boolean()
+          .default(true)
+          .describe('Answer from the local cache where possible. Set false to force a fetch'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      const { today, limit, max_pages: maxPages, use_cache: useCache } = args;
+      const targetDate = requireDate(args.date, today) || buildRecentWeekRangeUntilYesterday();
+      const dailySummaries = await buildSummary({ targetDate, maxPages, useCache });
+      return asJsonResult(toSummaryJson(targetDate.dateKey, dailySummaries, limit));
+    },
+  );
+
+  server.registerTool(
+    'gyazo_collection',
+    {
+      title: 'Read a Gyazo collection',
+      description:
+        'The metadata of a collection and of the captures in it. A collection ID looks ' +
+        'exactly like a capture ID, so a bare ID is read as a collection here; pass a ' +
+        'https://gyazo.com/collections/<id> URL when in doubt.',
+      inputSchema: {
+        id_or_url: z
+          .string()
+          .min(1)
+          .describe('Collection ID, or a https://gyazo.com/collections/<id> URL'),
+        sort: z
+          .enum(COLLECTION_SORTS)
+          .default('added')
+          .describe(
+            'Image order: added (as the collection holds them), created (upload time) or ' +
+              'captured (when the photo was taken)',
+          ),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ id_or_url, sort }) => {
+      const collectionId = normalizeCollectionId(id_or_url);
+      if (!collectionId) {
+        throw new Error(
+          `'${id_or_url}' is not a Gyazo collection ID or URL. Pass a 32-character ID or a ` +
+            'https://gyazo.com/collections/<id> URL. A https://gyazo.com/<id> URL is a single ' +
+            'capture, which gyazo_image reads.',
+        );
+      }
+
+      const { collection, images } = await readCollection(collectionId, {
+        sort: sort as CollectionSort,
+      });
+      return asJsonResult({
+        id: collection?.id ?? collectionId,
+        ...(collection?.name !== undefined ? { name: collection.name } : {}),
+        ...(collection?.description ? { description: collection.description } : {}),
+        ...(collection?.url !== undefined ? { url: collection.url } : {}),
+        ...(collection?.total_image_count !== undefined
+          ? { total_image_count: collection.total_image_count }
+          : {}),
+        ...(collection?.user !== undefined ? { user: collection.user } : {}),
+        images: images.map(toMetadata),
+      });
     },
   );
 

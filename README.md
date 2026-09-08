@@ -125,8 +125,16 @@ Configured in a client:
   a direct image URL.
 - `gyazo_latest_image`: metadata for the capture uploaded most recently. No
   arguments.
+- `gyazo_list`: the captures, newest first, with the same options as
+  `gyazo list`: `page`, `limit`, `date`, `today`, `hour`, `photos`, `uploaded`,
+  `max_pages`, `use_cache`. No arguments means the most recent page.
+- `gyazo_summary`: what a day or a range adds up to, with the same options as
+  `gyazo summary`: `date`, `today`, `limit`, `max_pages`, `use_cache`. No
+  arguments means the week up to yesterday.
+- `gyazo_collection`: a collection and the captures in it. Arguments:
+  `id_or_url` (required) and `sort` (`added`, `created` or `captured`).
 
-All three are read-only, and all three return metadata rather than image
+All of them are read-only, and all of them return metadata rather than image
 bytes: URLs, timestamp, OCR text, title, source application and page, and
 location when the capture carries one. Use the URLs in a result to show the
 capture itself. Handing base64 image data to a model turned out not to work

@@ -42,27 +42,42 @@ export type ParsedDateOption = {
   end: Date;
 };
 
-export function parseDateOption(value?: string): ParsedDateOption {
+/** Why a date could not be read, so each caller can word its own refusal. */
+export type DateOptionProblem = 'format' | 'month' | 'day';
+
+/**
+ * Reads a date the way --date accepts it, without deciding what to do when it
+ * cannot: the CLI reports and exits, the MCP server throws.
+ */
+export function tryParseDateOption(
+  value?: string,
+): { ok: true; value: ParsedDateOption } | { ok: false; problem: DateOptionProblem } {
   if (!value) {
     const today = new Date();
     const year = String(today.getFullYear());
     const month = String(today.getMonth() + 1).padStart(2, '0');
     const day = String(today.getDate()).padStart(2, '0');
     return {
-      granularity: 'day',
-      dateKey: `${year}-${month}-${day}`,
-      start: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0),
-      end: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999),
+      ok: true,
+      value: {
+        granularity: 'day',
+        dateKey: `${year}-${month}-${day}`,
+        start: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0),
+        end: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999),
+      },
     };
   }
 
   if (/^\d{4}$/.test(value)) {
     const year = Number(value);
     return {
-      granularity: 'year',
-      dateKey: value,
-      start: new Date(year, 0, 1, 0, 0, 0, 0),
-      end: new Date(year, 11, 31, 23, 59, 59, 999),
+      ok: true,
+      value: {
+        granularity: 'year',
+        dateKey: value,
+        start: new Date(year, 0, 1, 0, 0, 0, 0),
+        end: new Date(year, 11, 31, 23, 59, 59, 999),
+      },
     };
   }
 
@@ -72,14 +87,16 @@ export function parseDateOption(value?: string): ParsedDateOption {
     const month = Number(monthText);
     const probe = new Date(year, month - 1, 1);
     if (probe.getFullYear() !== year || probe.getMonth() !== month - 1) {
-      console.error('Error: --date month is invalid.');
-      process.exit(1);
+      return { ok: false, problem: 'month' };
     }
     return {
-      granularity: 'month',
-      dateKey: value,
-      start: new Date(year, month - 1, 1, 0, 0, 0, 0),
-      end: new Date(year, month, 0, 23, 59, 59, 999),
+      ok: true,
+      value: {
+        granularity: 'month',
+        dateKey: value,
+        start: new Date(year, month - 1, 1, 0, 0, 0, 0),
+        end: new Date(year, month, 0, 23, 59, 59, 999),
+      },
     };
   }
 
@@ -94,19 +111,35 @@ export function parseDateOption(value?: string): ParsedDateOption {
       probe.getMonth() !== month - 1 ||
       probe.getDate() !== day
     ) {
-      console.error('Error: --date day is invalid.');
-      process.exit(1);
+      return { ok: false, problem: 'day' };
     }
     return {
-      granularity: 'day',
-      dateKey: value,
-      start: new Date(year, month - 1, day, 0, 0, 0, 0),
-      end: new Date(year, month - 1, day, 23, 59, 59, 999),
+      ok: true,
+      value: {
+        granularity: 'day',
+        dateKey: value,
+        start: new Date(year, month - 1, day, 0, 0, 0, 0),
+        end: new Date(year, month - 1, day, 23, 59, 59, 999),
+      },
     };
   }
 
-  console.error('Error: --date format must be yyyy or yyyy-mm or yyyy-mm-dd.');
-  process.exit(1);
+  return { ok: false, problem: 'format' };
+}
+
+export const DATE_OPTION_PROBLEMS: Record<DateOptionProblem, string> = {
+  month: '--date month is invalid.',
+  day: '--date day is invalid.',
+  format: '--date format must be yyyy or yyyy-mm or yyyy-mm-dd.',
+};
+
+export function parseDateOption(value?: string): ParsedDateOption {
+  const parsed = tryParseDateOption(value);
+  if (!parsed.ok) {
+    console.error(`Error: ${DATE_OPTION_PROBLEMS[parsed.problem]}`);
+    process.exit(1);
+  }
+  return parsed.value;
 }
 
 export function formatDateYmd(date: Date): string {

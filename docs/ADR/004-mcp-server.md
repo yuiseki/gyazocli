@@ -2,8 +2,9 @@
 
 ## Status
 
-Accepted. `gyazo_search`, `gyazo_image` and `gyazo_latest_image` implemented,
-all read-only and all metadata only. `gyazo_upload` deliberately not.
+Accepted. `gyazo_search`, `gyazo_image`, `gyazo_latest_image`, `gyazo_list`,
+`gyazo_summary` and `gyazo_collection` implemented, all read-only and all
+metadata only. `gyazo_upload` deliberately not.
 
 ## Context
 
@@ -50,6 +51,24 @@ drops sharp from the dependency list entirely.
 for it yet, and a server that cannot write cannot be talked into writing. Every
 tool carries `readOnlyHint`, and a test asserts that the tool list contains
 nothing else.
+
+## The same answers as the CLI
+
+`gyazo_list` and `gyazo_summary` take the options their commands take, down to
+the defaults, because a client that knows `gyazo list --date 2026-02-20
+--photos` should not have to learn a second vocabulary. The names are
+snake_case, which is what tool arguments look like: `max_pages`, `use_cache`.
+
+The query behind each one moved into the services, so the command and the tool
+call the same function. `listCaptures`, `buildSummary` and `readCollection`
+answer the question; the command prints the answer and the tool serialises it.
+Copying a query into a second caller is how two callers start disagreeing.
+
+Validation stayed with each caller. Which options contradict each other is the
+same question in both places, but the answers differ in kind: the CLI reports
+and exits, and a server must not exit over one bad argument. `parseDateOption`
+and `parseHourOption` grew non-exiting variants for that reason, and the
+exiting ones are now thin wrappers over them.
 
 ## Consequences
 

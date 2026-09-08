@@ -1,10 +1,13 @@
 import { test, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import {
   CLI_PATH,
   REPO_ROOT,
   createTempCacheDir,
   startStubServer,
+  writeImageCache,
   type StubHandler,
 } from './helpers';
 
@@ -23,7 +26,12 @@ interface McpSession {
  */
 function startMcpServer(
   cacheDir: string,
-  options: { apiOrigin?: string; noToken?: boolean; args?: string[] } = {},
+  options: {
+    apiOrigin?: string;
+    webOrigin?: string;
+    noToken?: boolean;
+    args?: string[];
+  } = {},
 ): McpSession {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -33,6 +41,7 @@ function startMcpServer(
   };
   if (options.noToken) delete env.GYAZO_ACCESS_TOKEN;
   if (options.apiOrigin) env.GYAZO_API_ORIGIN = options.apiOrigin;
+  if (options.webOrigin) env.GYAZO_WEB_ORIGIN = options.webOrigin;
 
   const child: ChildProcessWithoutNullStreams = spawn(
     process.execPath,
@@ -350,7 +359,14 @@ test('tools/list offers the read-only tools and nothing that writes', async () =
     await initialize(session);
     const response = await session.request('tools/list');
     const names = response.result.tools.map((tool: any) => tool.name).sort();
-    expect(names).toEqual(['gyazo_image', 'gyazo_latest_image', 'gyazo_search']);
+    expect(names).toEqual([
+      'gyazo_collection',
+      'gyazo_image',
+      'gyazo_latest_image',
+      'gyazo_list',
+      'gyazo_search',
+      'gyazo_summary',
+    ]);
     for (const tool of response.result.tools) {
       expect(tool.annotations?.readOnlyHint).toBe(true);
     }
@@ -499,6 +515,303 @@ test('gyazo_latest_image says so when there is nothing there', async () => {
       arguments: {},
     });
     expect(response.result.content[0].text).toMatch(/no images found/i);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+
+function writeHourlyIndex(
+  cacheDir: string,
+  year: string,
+  month: string,
+  day: string,
+  hour: string,
+  imageIds: string[],
+): void {
+  const dir = path.join(cacheDir, 'hourly', year, month, day);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${hour}.json`), JSON.stringify(imageIds, null, 2), 'utf8');
+}
+
+/** Serves the plain listing, so gyazo_list can be exercised. */
+function listStub(images: unknown[]): StubHandler {
+  return (req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url.pathname === '/api/images' || url.pathname === '/api/search') {
+      res.end(JSON.stringify(images));
+      return;
+    }
+    res.end(JSON.stringify({ message: 'not found' }));
+  };
+}
+
+test('gyazo_list returns the most recent captures', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(listStub(IMAGES));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_list',
+      arguments: {},
+    });
+    expect(response.result.isError).toBeFalsy();
+    const found = JSON.parse(response.result.content[0].text);
+    expect(found).toHaveLength(2);
+    expect(found[0].image_id).toBe(IMAGES[0].image_id);
+
+    const listed = stub.requests.find((request) => request.url.startsWith('/api/images'));
+    const params = new URL(listed!.url, 'http://127.0.0.1').searchParams;
+    expect(params.get('page')).toBe('1');
+    expect(params.get('per_page')).toBe('20');
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_list takes the same options as the CLI', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(listStub(IMAGES));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    await session.request('tools/call', {
+      name: 'gyazo_list',
+      arguments: { page: 2, limit: 5 },
+    });
+    const listed = stub.requests.find((request) => request.url.startsWith('/api/images'));
+    const params = new URL(listed!.url, 'http://127.0.0.1').searchParams;
+    expect(params.get('page')).toBe('2');
+    expect(params.get('per_page')).toBe('5');
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_list photos goes through the saved search', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(listStub(IMAGES));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_list',
+      arguments: { photos: true },
+    });
+    expect(response.result.isError).toBeFalsy();
+    const searched = stub.requests.find((request) => request.url.startsWith('/api/search'));
+    expect(searched).toBeDefined();
+    const params = new URL(searched!.url, 'http://127.0.0.1').searchParams;
+    expect(params.get('query')).toBe('has:location');
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_list refuses options that contradict each other', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(listStub(IMAGES));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    for (const args of [
+      { photos: true, uploaded: true },
+      { today: true, date: '2026-02-20' },
+      { photos: true, hour: '2026-02-20-02' },
+      { hour: '2026-02-20-02', today: true },
+      { hour: '2026-02-20' },
+    ]) {
+      const response = await session.request('tools/call', {
+        name: 'gyazo_list',
+        arguments: args,
+      });
+      const failed = Boolean(response.error) || response.result?.isError === true;
+      expect(failed, JSON.stringify(args)).toBe(true);
+    }
+    expect(stub.requests).toHaveLength(0);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_list reads one hour out of the cache', async () => {
+  const cacheDir = createTempCacheDir();
+  writeHourlyIndex(cacheDir, '2026', '02', '20', '02', [IMAGES[0].image_id]);
+  writeImageCache(cacheDir, IMAGES[0].image_id, IMAGES[0]);
+  const stub = await startStubServer(listStub([]));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_list',
+      arguments: { hour: '2026-02-20-02' },
+    });
+    const found = JSON.parse(response.result.content[0].text);
+    expect(found).toHaveLength(1);
+    expect(found[0].image_id).toBe(IMAGES[0].image_id);
+    // Answered from the cache, without asking the API.
+    expect(stub.requests).toHaveLength(0);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_list says so when an hour holds nothing', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(listStub([]));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_list',
+      arguments: { hour: '2026-02-20-02' },
+    });
+    expect(response.result.content[0].text).toMatch(/no images found/i);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_summary summarises a day from the cache', async () => {
+  const cacheDir = createTempCacheDir();
+  const id = IMAGES[0].image_id;
+  writeHourlyIndex(cacheDir, '2026', '02', '20', '02', [id]);
+  writeImageCache(cacheDir, id, {
+    ...IMAGES[0],
+    created_at: '2026-02-20T02:34:56+0900',
+    metadata: { app: 'Google Chrome', title: 'cat', url: 'https://example.com/cat' },
+  });
+  const stub = await startStubServer(listStub([]));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_summary',
+      arguments: { date: '2026-02-20' },
+    });
+    expect(response.result.isError).toBeFalsy();
+    const summary = JSON.parse(response.result.content[0].text);
+    expect(summary.date).toBe('2026-02-20');
+    expect(summary.days).toHaveLength(1);
+    expect(summary.days[0].date).toBe('2026-02-20');
+    expect(summary.days[0].image_count).toBe(1);
+    expect(summary.days[0].apps.map((app: any) => app.app)).toContain('Google Chrome');
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_summary limits the ranking rows like the CLI', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(listStub([]));
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_summary',
+      arguments: { date: '2026-02-20', limit: 1 },
+    });
+    expect(response.result.isError).toBeFalsy();
+    const summary = JSON.parse(response.result.content[0].text);
+    for (const day of summary.days) {
+      expect(day.apps.length).toBeLessThanOrEqual(1);
+      expect(day.tags.length).toBeLessThanOrEqual(1);
+    }
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+const COLLECTION_ID = '21ca16a1023c667a7a437be561a65018';
+
+function collectionStub(): StubHandler {
+  return (_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        id: COLLECTION_ID,
+        name: 'Hiroshima 2026',
+        url: `https://gyazo.com/collections/${COLLECTION_ID}`,
+        total_image_count: 2,
+        user: { id: '5342', name: 'yuiseki' },
+        images: [
+          { ...IMAGES[0], created_at: '2026-08-30T05:00:00.000Z' },
+          { ...IMAGES[1], created_at: '2026-08-30T07:00:00.000Z' },
+        ],
+      }),
+    );
+  };
+}
+
+test('gyazo_collection reads a collection and its images', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(collectionStub());
+  const session = startMcpServer(cacheDir, { webOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_collection',
+      arguments: { id_or_url: `https://gyazo.com/collections/${COLLECTION_ID}` },
+    });
+    expect(response.result.isError).toBeFalsy();
+    const collection = JSON.parse(response.result.content[0].text);
+    expect(collection.name).toBe('Hiroshima 2026');
+    expect(collection.total_image_count).toBe(2);
+    expect(collection.images).toHaveLength(2);
+    expect(collection.images[0].image_id).toBe(IMAGES[0].image_id);
+
+    const requested = stub.requests.find((request) => request.url.includes(COLLECTION_ID));
+    expect(requested).toBeDefined();
+    expect(requested!.url).toContain(`/collections/${COLLECTION_ID}.json`);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_collection sorts by capture time when asked', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(collectionStub());
+  const session = startMcpServer(cacheDir, { webOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_collection',
+      arguments: { id_or_url: COLLECTION_ID, sort: 'created' },
+    });
+    const collection = JSON.parse(response.result.content[0].text);
+    // Newest first, which is the reverse of how they were added.
+    expect(collection.images[0].image_id).toBe(IMAGES[1].image_id);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_collection refuses an image URL', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(collectionStub());
+  const session = startMcpServer(cacheDir, { webOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_collection',
+      arguments: { id_or_url: `https://gyazo.com/${IMAGES[0].image_id}` },
+    });
+    const failed = Boolean(response.error) || response.result?.isError === true;
+    expect(failed).toBe(true);
+    expect(stub.requests).toHaveLength(0);
   } finally {
     await session.close();
     await stub.close();
