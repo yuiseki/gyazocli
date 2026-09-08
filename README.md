@@ -131,15 +131,31 @@ Configured in a client:
 - `gyazo_summary`: what a day or a range adds up to, with the same options as
   `gyazo summary`: `date`, `today`, `limit`, `max_pages`, `use_cache`. No
   arguments means the week up to yesterday.
+- `gyazo_recent`: what arrived since a moment or since a capture you have
+  already seen. Arguments: `minutes`, `since`, `after_image_id`, `limit`,
+  `max_pages`. No arguments means the last 30 minutes.
 - `gyazo_collection`: a collection and the captures in it. Arguments:
-  `id_or_url` (required) and `sort` (`added`, `created` or `captured`).
+  `id_or_url` (required), `sort` (`added`, `created` or `captured`), `page` and
+  `per`. Reports `total_image_count`, `returned_image_count` and `truncated`.
+- `gyazo_collections`: the collections, with their IDs, filtered by `query`
+  against their names.
+- `gyazo_image_content`: the pixels of one capture, as image content.
+  Arguments: `id_or_url` (required), `width` (default 1024), `format`
+  (`webp` or `jpeg`) and `max_bytes`.
 
-All of them are read-only, and all of them return metadata rather than image
-bytes. A capture that carries coordinates gets a `location: {latitude,
-longitude}`, and OCR text is reported wherever the response carries it: URLs, timestamp, OCR text, title, source application and page, and
-location when the capture carries one. Use the URLs in a result to show the
-capture itself. Handing base64 image data to a model turned out not to work
-well in practice, and describing a capture does.
+All of them are read-only. Everything except `gyazo_image_content` returns
+metadata rather than image bytes: URLs, timestamps, OCR text, title, source
+application and page, and location when the capture carries one. URLs, timestamp, OCR text, title, source application and page, and
+location when the capture carries one. A capture with a location gets a `location` holding
+`latitude`, `longitude`, `country_code` and an address in Japanese and
+English, each with its `locality` and `admin1`, plus `altitude_m` and
+`heading_deg` where the response carries the raw EXIF, which is the case for
+captures read through a collection. `captured_at` is when the shutter was
+pressed, as distinct from the upload time in `created_at`.
+
+For the pixels, `gyazo_image_content` returns a width-limited rendition, one
+capture at a time. Returning image bytes from the list and search tools is
+what made this awkward in practice, so those stay metadata-only.
 
 Tool names and arguments follow
 [nota/gyazo-mcp-server](https://github.com/nota/gyazo-mcp-server), so a client

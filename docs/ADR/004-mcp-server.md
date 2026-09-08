@@ -2,9 +2,10 @@
 
 ## Status
 
-Accepted. `gyazo_search`, `gyazo_image`, `gyazo_latest_image`, `gyazo_list`,
-`gyazo_summary` and `gyazo_collection` implemented, all read-only and all
-metadata only. `gyazo_upload` deliberately not.
+Accepted. Nine tools, all read-only: `gyazo_search`, `gyazo_image`,
+`gyazo_image_content`, `gyazo_latest_image`, `gyazo_list`, `gyazo_recent`,
+`gyazo_summary`, `gyazo_collection`, `gyazo_collections`. `gyazo_upload`
+deliberately not.
 
 ## Context
 
@@ -44,6 +45,28 @@ part a model can actually reason about.
 So every tool here returns metadata and URLs, and none returns pixels. A
 client that wants to show a capture opens the URL in the result. This also
 drops sharp from the dependency list entirely.
+
+## Pixels, after all, for one capture at a time
+
+Metadata-only held for lists and searches and turned out to be too strict for
+a single capture. The use case that matters is a person walking somewhere
+unfamiliar saying "look at this": GPS and OCR give the place and the letters,
+not what they are looking at.
+
+`gyazo_image_content` is a separate tool rather than a flag on `gyazo_image`,
+so a call that only wants metadata cannot come back with a megabyte. It
+returns a width-limited rendition from Gyazo's own resize route, which needs
+no credentials, so there is still no image library here. 1024px is about 130 KB
+as webp. Over `max_bytes` it refuses and says what to change, rather than
+sending something the host will drop.
+
+## Differential retrieval
+
+Four captures in a row, then "look at what I just captured", is not a question
+`gyazo_latest_image` can answer. `gyazo_recent` takes a window in minutes, an
+explicit `since`, or `after_image_id` as a watermark, and returns what came
+after. A watermark that cannot be found is reported: returning everything
+walked would read as "all of this is new".
 
 ## Read-only by construction
 
