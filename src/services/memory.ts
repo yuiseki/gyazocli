@@ -578,3 +578,57 @@ export async function listCapturesSince(
 
   return { images: collected.slice(0, limit), pagesWalked };
 }
+
+/**
+ * Fill in what the lean endpoints leave out.
+ *
+ * The listing and the search endpoints return an image without its
+ * coordinates or its address, whatever the capture actually carries; only the
+ * detail endpoint has them. So a caller that needs a location has to ask again
+ * per image, which is what this does: the cache first, the API for the rest,
+ * a few at a time, writing what it fetches back to the cache so the next look
+ * is free.
+ */
+export async function enrichImageLocations(
+  images: any[],
+  options: { useCache?: boolean; limit?: number; concurrency?: number } = {},
+): Promise<any[]> {
+  const useCache = options.useCache !== false;
+  const limit = options.limit ?? 40;
+  const concurrency = Math.max(1, options.concurrency ?? 5);
+
+  const enriched = [...images];
+  const pending: number[] = [];
+
+  for (let index = 0; index < enriched.length && pending.length < limit; index++) {
+    const image = enriched[index];
+    if (image?.metadata?.exif_normalized || image?.metadata?.exif_address) continue;
+
+    if (useCache) {
+      const cached = loadImageCache(image?.image_id);
+      if (cached) {
+        enriched[index] = mergeImageForDisplay(image, cached);
+        continue;
+      }
+    }
+    pending.push(index);
+  }
+
+  for (let start = 0; start < pending.length; start += concurrency) {
+    const batch = pending.slice(start, start + concurrency);
+    await Promise.all(
+      batch.map(async (index) => {
+        const image = enriched[index];
+        try {
+          const detail = await getImageDetail(image.image_id);
+          saveImageCache(image.image_id, detail);
+          enriched[index] = mergeImageForDisplay(image, detail);
+        } catch (_error) {
+          // A capture that cannot be fetched keeps what the listing said.
+        }
+      }),
+    );
+  }
+
+  return enriched;
+}

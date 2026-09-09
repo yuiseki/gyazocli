@@ -34,7 +34,12 @@ import {
   getAddressEntry,
   normalizeText,
 } from './format';
-import { listCaptures, listCapturesSince, type CaptureAlias } from './services/memory';
+import {
+  enrichImageLocations,
+  listCaptures,
+  listCapturesSince,
+  type CaptureAlias,
+} from './services/memory';
 import { buildSummary, toSummaryJson } from './services/analytics';
 import {
   COLLECTION_SORTS,
@@ -233,6 +238,19 @@ function asJsonResult(payload: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }] };
 }
 
+const INCLUDE_LOCATION = z
+  .boolean()
+  .default(true)
+  .describe(
+    'Fill in the location, which the listing and search endpoints leave out. Costs one ' +
+      'extra lookup per capture the local cache does not already hold. Set false when the ' +
+      'coordinates do not matter',
+  );
+
+async function withLocations(images: any[], includeLocation: boolean): Promise<any[]> {
+  return includeLocation ? enrichImageLocations(images) : images;
+}
+
 function asMetadataListResult(images: any[]) {
   if (!images || images.length === 0) {
     return NO_IMAGES;
@@ -281,22 +299,16 @@ export function createMcpServer(): McpServer {
           .max(100)
           .default(20)
           .describe('Number of results per page (max: 100)'),
+        include_location: INCLUDE_LOCATION,
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    logged('gyazo_search', async ({ query, page, per }) => {
+    logged('gyazo_search', async ({ query, page, per, include_location: includeLocation }) => {
       const images = await searchImages(query, page, per);
       if (!images || images.length === 0) {
         return NO_IMAGES;
       }
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify(images.map(toMetadata), null, 2),
-          },
-        ],
-      };
+      return asMetadataListResult(await withLocations(images, includeLocation));
     }),
   );
 
@@ -408,6 +420,7 @@ export function createMcpServer(): McpServer {
           .boolean()
           .default(true)
           .describe('Answer from the local cache where possible. Set false to force a fetch'),
+        include_location: INCLUDE_LOCATION,
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
@@ -440,7 +453,7 @@ export function createMcpServer(): McpServer {
         hour: hour || undefined,
         alias,
       });
-      return asMetadataListResult(images);
+      return asMetadataListResult(await withLocations(images, args.include_location));
     }),
   );
 
@@ -596,6 +609,7 @@ export function createMcpServer(): McpServer {
           .max(20)
           .default(5)
           .describe('How many pages of 100 to walk before giving up on the boundary'),
+        include_location: INCLUDE_LOCATION,
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
@@ -641,7 +655,7 @@ export function createMcpServer(): McpServer {
             'account. Ask for a window in minutes instead, or raise max_pages.',
         );
       }
-      return asMetadataListResult(result.images);
+      return asMetadataListResult(await withLocations(result.images, args.include_location));
     }),
   );
 

@@ -191,7 +191,12 @@ test('tools/list offers gyazo_search', async () => {
     expect(search).toBeDefined();
     expect(search.description).toMatch(/search/i);
     expect(search.inputSchema.required).toContain('query');
-    expect(Object.keys(search.inputSchema.properties).sort()).toEqual(['page', 'per', 'query']);
+    expect(Object.keys(search.inputSchema.properties).sort()).toEqual([
+      'include_location',
+      'page',
+      'per',
+      'query',
+    ]);
   } finally {
     await session.close();
   }
@@ -944,6 +949,115 @@ test('the OCR text comes through from wherever the response carries it', async (
   }
 });
 
+// --- location enrichment ----------------------------------------------------
+
+/**
+ * The listing and the search endpoints return lean images: no coordinates, no
+ * address, whatever the capture actually carries. Only the detail endpoint has
+ * them, so a stub has to distinguish the two.
+ */
+function leanThenDetailedStub(): StubHandler {
+  const lean = {
+    image_id: PHONE_PHOTO.image_id,
+    permalink_url: PHONE_PHOTO.permalink_url,
+    url: PHONE_PHOTO.url,
+    type: 'jpg',
+    created_at: PHONE_PHOTO.created_at,
+    metadata: { app: 'Gyazo Android', title: null, url: null, desc: '' },
+  };
+  return (req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url.pathname.startsWith('/api/images/')) {
+      res.end(JSON.stringify(PHONE_PHOTO));
+      return;
+    }
+    if (url.pathname === '/api/images' || url.pathname === '/api/search') {
+      res.end(JSON.stringify([lean]));
+      return;
+    }
+    res.end(JSON.stringify([]));
+  };
+}
+
+function detailRequests(stub: { requests: { url: string }[] }): string[] {
+  return stub.requests.filter((request) => request.url.startsWith('/api/images/')).map((r) => r.url);
+}
+
+test('gyazo_search fills in the location the search endpoint leaves out', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(leanThenDetailedStub());
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_search',
+      arguments: { query: 'お好み焼' },
+    });
+    const found = JSON.parse(response.result.content[0].text);
+    expect(found[0].location.latitude).toBeCloseTo(34.386172, 5);
+    expect(found[0].location.address.ja.locality).toBe('広島市');
+    expect(detailRequests(stub)).toHaveLength(1);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('the second look comes from the cache', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(leanThenDetailedStub());
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    await session.request('tools/call', { name: 'gyazo_search', arguments: { query: 'a' } });
+    await session.request('tools/call', { name: 'gyazo_search', arguments: { query: 'b' } });
+    expect(detailRequests(stub)).toHaveLength(1);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('include_location false leaves the API alone', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(leanThenDetailedStub());
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_search',
+      arguments: { query: 'お好み焼', include_location: false },
+    });
+    const found = JSON.parse(response.result.content[0].text);
+    expect(found[0].location).toBeUndefined();
+    expect(detailRequests(stub)).toHaveLength(0);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
+test('gyazo_recent and gyazo_list fill it in too', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(leanThenDetailedStub());
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const list = await session.request('tools/call', { name: 'gyazo_list', arguments: {} });
+    expect(JSON.parse(list.result.content[0].text)[0].location.country_code).toBe('JP');
+
+    const recent = await session.request('tools/call', {
+      name: 'gyazo_recent',
+      arguments: { since: '2026-08-01T00:00:00Z' },
+    });
+    expect(JSON.parse(recent.result.content[0].text)[0].location.country_code).toBe('JP');
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
 // --- image content ---------------------------------------------------------
 
 /** Serves the sized rendition route, and the image detail beside it. */
@@ -1378,7 +1492,8 @@ test('gyazo_recent stops walking once it is past the window', async () => {
   try {
     await initialize(session);
     await session.request('tools/call', { name: 'gyazo_recent', arguments: { minutes: 3 } });
-    const pages = stub.requests.filter((request) => request.url.startsWith('/api/images'));
+    // Listing pages only: the location lookups hit /api/images/<id>.
+    const pages = stub.requests.filter((request) => request.url.startsWith('/api/images?'));
     // Everything it needs is on the first page, so it must not ask for a second.
     expect(pages).toHaveLength(1);
   } finally {
