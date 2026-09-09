@@ -193,7 +193,11 @@ export async function fetchImageRendition(
   format: RenditionFormat = 'webp',
 ): Promise<ImageRendition> {
   const extension = format === 'jpeg' ? 'jpg' : 'webp';
-  const url = `${imageOrigin()}/thumb/${width}_w/${imageId}.${extension}`;
+  // The `-jpg` before the extension is a source-type marker, and it has to be
+  // there: without it the route answers 404 for any capture whose derivative
+  // is not already stored, which is most of them. Its value is ignored, and
+  // the extension alone decides what comes back, so a constant will do.
+  const url = `${imageOrigin()}/thumb/${width}_w/${imageId}-jpg.${extension}`;
   const response = await axios.get(url, { responseType: 'arraybuffer' });
   const data = Buffer.from(response.data);
   const contentType = String(response.headers['content-type'] || '').split(';')[0].trim();

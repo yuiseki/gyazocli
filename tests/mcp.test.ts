@@ -1097,8 +1097,10 @@ test('gyazo_image_content returns the pixels as image content', async () => {
     expect(note.text).toMatch(/1024/);
     expect(note.text).toMatch(new RegExp(PHONE_PHOTO.image_id));
 
+    // The source-type marker is not optional: without it the rendition route
+    // 404s for any capture whose derivative is not already stored.
     const asked = stub.requests.find((request) => request.url.startsWith('/thumb/'));
-    expect(asked!.url).toBe(`/thumb/1024_w/${PHONE_PHOTO.image_id}.webp`);
+    expect(asked!.url).toBe(`/thumb/1024_w/${PHONE_PHOTO.image_id}-jpg.webp`);
   } finally {
     await session.close();
     await stub.close();
@@ -1118,7 +1120,7 @@ test('gyazo_image_content takes a width and a format', async () => {
     const image = response.result.content.find((part: any) => part.type === 'image');
     expect(image.mimeType).toBe('image/jpeg');
     const asked = stub.requests.find((request) => request.url.startsWith('/thumb/'));
-    expect(asked!.url).toBe(`/thumb/512_w/${PHONE_PHOTO.image_id}.jpg`);
+    expect(asked!.url).toBe(`/thumb/512_w/${PHONE_PHOTO.image_id}-jpg.jpg`);
   } finally {
     await session.close();
     await stub.close();
