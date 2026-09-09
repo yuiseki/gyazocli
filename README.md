@@ -122,15 +122,26 @@ results back from the detail endpoint to confirm the filter had applied:
 
 | Operator | Matches |
 | --- | --- |
+| `has:exif` | photographs rather than screenshots |
+| `has:location` | captures with coordinates |
 | `address:広島`, `address:Hiroshima`, `address:730-0041` | the reverse-geocoded address of a capture with GPS, in any language or case, postal codes included |
 | `app:"Gyazo Android"` | the application the capture came from |
 | `title:`, `url:`, `desc:` | the page it was captured from |
 | `ocr:` | the text in the image |
 | `type:png` | the file type |
-| `has:location` | only captures with coordinates |
-| `has:exif` | only captures with EXIF, which is not the same thing |
 | `since:2026-08-30 until:2026-08-31` | the upload date |
 | `-address:広島` | negation |
+| `OR` | alternation; terms are ANDed otherwise |
+
+To narrow to photographs, reach for `has:exif`. The application does not tell
+them apart: `app:"Gyazo Android"` includes screenshots and screen recordings
+from the same phone, and one page of `app:"Gyazo Android" -has:exif` came back
+as 68 gif and 30 png against 2 jpg.
+
+`has:exif` and `has:location` overlap without either containing the other. A
+photo taken indoors has EXIF and no coordinates; 86 captures here carry
+coordinates without the EXIF flag. `has:exif OR has:location` is the widest
+reading of "a photo".
 
 There is no coordinate or radius search. `location:`, `geo:`, `near:`,
 `bbox:`, `city:`, `lat:` and the like all return nothing, exactly as an
