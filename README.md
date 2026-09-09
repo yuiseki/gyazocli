@@ -114,12 +114,33 @@ Configured in a client:
 }
 ```
 
+### Query syntax
+
+Bare words match the OCR text, title and description. These operators were
+checked against the live API, each with a value that should match, reading the
+results back from the detail endpoint to confirm the filter had applied:
+
+| Operator | Matches |
+| --- | --- |
+| `address:広島`, `address:Hiroshima`, `address:730-0041` | the reverse-geocoded address of a capture with GPS, in any language or case, postal codes included |
+| `app:"Gyazo Android"` | the application the capture came from |
+| `title:`, `url:`, `desc:` | the page it was captured from |
+| `ocr:` | the text in the image |
+| `type:png` | the file type |
+| `has:location` | only captures with coordinates |
+| `has:exif` | only captures with EXIF, which is not the same thing |
+| `since:2026-08-30 until:2026-08-31` | the upload date |
+| `-address:広島` | negation |
+
+There is no coordinate or radius search. `location:`, `geo:`, `near:`,
+`bbox:`, `city:`, `lat:` and the like all return nothing, exactly as an
+invented operator does, so search by place with `address:`.
+
 ### Tools
 
 - `gyazo_search`: full-text search over your captures. Arguments: `query`
   (required, up to 200 characters), `page` (default 1), `per` (default 20,
-  max 100). Search syntax is the same as Gyazo's: `cat`, `title:cat`,
-  `app:"Google Chrome"`, `url:google.com`, `cat since:2024-01-01 until:2024-12-31`.
+  max 100), `include_location`. See the query syntax below.
 - `gyazo_image`: metadata for one capture. Argument: `id_or_url` (required),
   which accepts a bare 32-character ID, a `https://gyazo.com/<id>` permalink or
   a direct image URL.

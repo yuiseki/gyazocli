@@ -48,12 +48,30 @@ import {
   type CollectionSort,
 } from './services/collections';
 
+/**
+ * The operators below were checked against the live API rather than taken from
+ * documentation: each one was run with a value that should match, and the
+ * results were read back from the detail endpoint to confirm the filter had
+ * actually applied. An operator Gyazo does not know returns nothing at all
+ * rather than falling back to a text search, so an untested guess costs the
+ * model a turn.
+ */
 const SEARCH_QUERY_DESCRIPTION = [
-  'Search keyword (max length: 200 characters).',
-  'Examples: cat | title:cat | app:"Google Chrome" | url:google.com |',
-  'cat since:2024-01-01 until:2024-12-31.',
-  'If nothing suitable comes back, rephrase the query to match what the user',
-  'meant and search again rather than giving up on the first attempt.',
+  'Search keyword, up to 200 characters. Bare words match the OCR text, title and',
+  'description.',
+  'Operators, all confirmed to work: address: matches the reverse-geocoded address of',
+  'a capture with GPS, in any language and case, and also matches postal codes, so',
+  'address:広島 and address:Hiroshima and address:730-0041 all find the same photos;',
+  'app: the application it came from, as app:"Gyazo Android"; title:, url: and desc:',
+  'the page it was captured from; ocr: the text in the image; type: the file type, as',
+  'type:png; has:location only captures with coordinates; has:exif only captures with',
+  'EXIF, which is not the same thing; since: and until: bound the upload date, as',
+  'since:2026-08-30 until:2026-08-31. A leading - negates, as -address:広島. Quote a',
+  'value that contains spaces.',
+  'There is no coordinate or radius search: location:, geo:, near:, bbox:, city: and',
+  'the like all return nothing. To search by place, use address: with a place name.',
+  'If nothing suitable comes back, rephrase the query to match what the user meant and',
+  'search again rather than giving up on the first attempt.',
 ].join(' ');
 
 function serverVersion(): string {
