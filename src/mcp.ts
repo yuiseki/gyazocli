@@ -267,19 +267,39 @@ const INCLUDE_LOCATION = z
   .default(true)
   .describe(
     'Fill in the location, which the listing and search endpoints leave out. Costs one ' +
-      'extra lookup per capture the local cache does not already hold. Set false when the ' +
-      'coordinates do not matter',
+      'extra lookup per capture the local cache does not already hold, so a page of 40 ' +
+      'uncached captures adds a few seconds; the next look at the same captures is free. ' +
+      'Set false when the coordinates do not matter',
   );
 
-async function withLocations(images: any[], includeLocation: boolean): Promise<any[]> {
-  return includeLocation ? enrichImageLocations(images) : images;
+/**
+ * Fill in the locations, and say so when the per-call limit stopped it part
+ * way: past that point a capture without a location is indistinguishable from
+ * one that has none, which is exactly the sort of silence worth breaking.
+ */
+async function withLocations(
+  images: any[],
+  includeLocation: boolean,
+): Promise<{ images: any[]; note?: string }> {
+  if (!includeLocation) return { images };
+  const result = await enrichImageLocations(images);
+  if (result.skipped === 0) return { images: result.images };
+  return {
+    images: result.images,
+    note:
+      `The location was filled in for ${result.considered} captures; ${result.skipped} were ` +
+      'left as the listing returned them, so their missing location means "not looked up" ' +
+      'rather than "no location". Ask for fewer at a time to cover them all.',
+  };
 }
 
-function asMetadataListResult(images: any[]) {
+function asMetadataListResult(images: any[], note?: string) {
   if (!images || images.length === 0) {
     return NO_IMAGES;
   }
-  return asJsonResult(images.map(toMetadata));
+  const json = asJsonResult(images.map(toMetadata));
+  if (!note) return json;
+  return { content: [...json.content, { type: 'text' as const, text: note }] };
 }
 
 /**
@@ -332,7 +352,8 @@ export function createMcpServer(): McpServer {
       if (!images || images.length === 0) {
         return NO_IMAGES;
       }
-      return asMetadataListResult(await withLocations(images, includeLocation));
+      const withLocation = await withLocations(images, includeLocation);
+      return asMetadataListResult(withLocation.images, withLocation.note);
     }),
   );
 
@@ -477,7 +498,8 @@ export function createMcpServer(): McpServer {
         hour: hour || undefined,
         alias,
       });
-      return asMetadataListResult(await withLocations(images, args.include_location));
+      const withLocation = await withLocations(images, args.include_location);
+      return asMetadataListResult(withLocation.images, withLocation.note);
     }),
   );
 
@@ -679,7 +701,8 @@ export function createMcpServer(): McpServer {
             'account. Ask for a window in minutes instead, or raise max_pages.',
         );
       }
-      return asMetadataListResult(await withLocations(result.images, args.include_location));
+      const withLocation = await withLocations(result.images, args.include_location);
+      return asMetadataListResult(withLocation.images, withLocation.note);
     }),
   );
 

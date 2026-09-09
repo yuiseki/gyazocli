@@ -1058,6 +1058,44 @@ test('gyazo_recent and gyazo_list fill it in too', async () => {
   }
 });
 
+test('a page bigger than the lookup limit says which captures were skipped', async () => {
+  const cacheDir = createTempCacheDir();
+  const lean = Array.from({ length: 45 }, (_, index) => ({
+    image_id: `ff${String(index).padStart(30, '0')}`,
+    permalink_url: `https://gyazo.com/ff${String(index).padStart(30, '0')}`,
+    url: `https://i.gyazo.com/ff${String(index).padStart(30, '0')}.jpg`,
+    type: 'jpg',
+    created_at: '2026-08-30T10:06:11.000Z',
+    metadata: { app: 'Gyazo Android' },
+  }));
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url.pathname.startsWith('/api/images/')) {
+      res.end(JSON.stringify(PHONE_PHOTO));
+      return;
+    }
+    res.end(JSON.stringify(lean));
+  });
+  const session = startMcpServer(cacheDir, { apiOrigin: stub.origin });
+  try {
+    await initialize(session);
+    const response = await session.request('tools/call', {
+      name: 'gyazo_list',
+      arguments: { limit: 45 },
+    });
+    const parts = response.result.content;
+    const note = parts[parts.length - 1].text;
+    // 45 asked for, 40 looked up, and the remaining 5 said out loud.
+    expect(note).toMatch(/40 captures/);
+    expect(note).toMatch(/5 were left/);
+    expect(note).toMatch(/not looked up/);
+  } finally {
+    await session.close();
+    await stub.close();
+  }
+});
+
 // --- image content ---------------------------------------------------------
 
 /** Serves the sized rendition route, and the image detail beside it. */

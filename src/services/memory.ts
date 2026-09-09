@@ -589,20 +589,35 @@ export async function listCapturesSince(
  * a few at a time, writing what it fetches back to the cache so the next look
  * is free.
  */
+export interface EnrichLocationsResult {
+  images: any[];
+  /** How many captures were looked up, cache hits included. */
+  considered: number;
+  /** Captures left alone because the per-call limit was reached. */
+  skipped: number;
+}
+
 export async function enrichImageLocations(
   images: any[],
   options: { useCache?: boolean; limit?: number; concurrency?: number } = {},
-): Promise<any[]> {
+): Promise<EnrichLocationsResult> {
   const useCache = options.useCache !== false;
   const limit = options.limit ?? 40;
-  const concurrency = Math.max(1, options.concurrency ?? 5);
+  const concurrency = Math.max(1, options.concurrency ?? 10);
 
   const enriched = [...images];
   const pending: number[] = [];
+  let considered = 0;
+  let skipped = 0;
 
-  for (let index = 0; index < enriched.length && pending.length < limit; index++) {
+  for (let index = 0; index < enriched.length; index++) {
     const image = enriched[index];
     if (image?.metadata?.exif_normalized || image?.metadata?.exif_address) continue;
+    if (considered >= limit) {
+      skipped++;
+      continue;
+    }
+    considered++;
 
     if (useCache) {
       const cached = loadImageCache(image?.image_id);
@@ -630,5 +645,5 @@ export async function enrichImageLocations(
     );
   }
 
-  return enriched;
+  return { images: enriched, considered, skipped };
 }
