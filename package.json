@@ -1,6 +1,6 @@
 {
   "name": "@yuiseki/gyazocli",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Gyazo Memory CLI for AI Secretary",
   "repository": {
     "type": "git",
