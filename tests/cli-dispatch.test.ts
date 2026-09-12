@@ -113,13 +113,25 @@ test('list exits non-zero when the API returns an error', async () => {
 
 test('sync --query walks the search endpoint and caches what it finds', async () => {
   const cacheDir = createTempCacheDir();
+  // The hourly index is keyed by local time, so the fixture carries this
+  // machine's own offset and the expected path is derived from the same
+  // instant. A fixed +09:00 would put the capture in a different hour, and a
+  // different day, anywhere else.
+  const capturedAt = new Date(2026, 7, 30, 2, 34, 56);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const offsetMinutes = -capturedAt.getTimezoneOffset();
+  const offset = `${offsetMinutes < 0 ? '-' : '+'}${pad(Math.floor(Math.abs(offsetMinutes) / 60))}${pad(Math.abs(offsetMinutes) % 60)}`;
+  const createdAt =
+    `${capturedAt.getFullYear()}-${pad(capturedAt.getMonth() + 1)}-${pad(capturedAt.getDate())}` +
+    `T${pad(capturedAt.getHours())}:${pad(capturedAt.getMinutes())}:${pad(capturedAt.getSeconds())}${offset}`;
+
   const pageOf = (prefix: string) =>
     Array.from({ length: 2 }, (_, index) => ({
       image_id: `${prefix}${String(index).padStart(30, '0')}`,
       permalink_url: `https://gyazo.com/${prefix}${String(index).padStart(30, '0')}`,
       url: `https://i.gyazo.com/${prefix}${String(index).padStart(30, '0')}.jpg`,
       type: 'jpg',
-      created_at: '2026-08-30T02:34:56+0900',
+      created_at: createdAt,
       metadata: { app: 'Gyazo Android' },
     }));
 
@@ -133,7 +145,7 @@ test('sync --query walks the search endpoint and caches what it finds', async ()
     }
     if (url.pathname.startsWith('/api/images/')) {
       const id = url.pathname.split('/').pop();
-      res.end(JSON.stringify({ image_id: id, created_at: '2026-08-30T02:34:56+0900', ocr: { description: 'x' } }));
+      res.end(JSON.stringify({ image_id: id, created_at: createdAt, ocr: { description: 'x' } }));
       return;
     }
     res.end(JSON.stringify([]));
@@ -163,7 +175,14 @@ test('sync --query walks the search endpoint and caches what it finds', async ()
       expect(fs.existsSync(cached), `${id} should be cached`).toBe(true);
     }
     // And in the hourly index for the hour it was captured in.
-    const hourly = path.join(cacheDir, 'hourly', '2026', '08', '30', '02.json');
+    const hourly = path.join(
+      cacheDir,
+      'hourly',
+      String(capturedAt.getFullYear()),
+      pad(capturedAt.getMonth() + 1),
+      pad(capturedAt.getDate()),
+      `${pad(capturedAt.getHours())}.json`,
+    );
     expect(fs.existsSync(hourly)).toBe(true);
     expect(JSON.parse(fs.readFileSync(hourly, 'utf8'))).toHaveLength(4);
   } finally {
