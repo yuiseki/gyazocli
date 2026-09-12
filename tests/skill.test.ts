@@ -35,6 +35,11 @@ test('the installed skill matches the one in skills/', () => {
   }
 });
 
+/**
+ * `npx skills add yuiseki/gyazocli` reads `skills/` from this repository, and
+ * it only sees a directory as a skill when its SKILL.md declares both fields.
+ * This is the contract with that tool, not a style rule.
+ */
 test('every skill declares a name and a description', () => {
   for (const skill of fs.readdirSync(SOURCE)) {
     const text = fs.readFileSync(path.join(SOURCE, skill, 'SKILL.md'), 'utf8');

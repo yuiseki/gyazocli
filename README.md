@@ -203,7 +203,19 @@ commands are, what the search syntax actually accepts, and the judgement calls
 that keep a capture from becoming a claim it does not support. It ships in the
 npm package.
 
-Install it where the agent looks for skills. From an installed package:
+Install it with [skills](https://github.com/vercel-labs/skills), which reads
+`skills/` straight from this repository:
+
+```bash
+npx skills add yuiseki/gyazocli
+```
+
+That writes the skill to `.agents/skills/gyazo/` in the current project, links
+it for whichever agents are present, and records it in `skills-lock.json`.
+`--list` shows what a repository offers without installing, `-g` installs for
+every project, and `-a claude-code` picks an agent explicitly.
+
+From an installed npm package instead:
 
 ```bash
 mkdir -p ~/.claude/skills
