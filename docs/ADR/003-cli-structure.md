@@ -44,6 +44,8 @@ Adopt and document the existing top-level command structure.
     - `--no-cache`
 - `gyazo search [query]`
   - Options:
+    - `-p, --page <number>` (default: `1`)
+    - `-l, --limit <number>` (default: `20`)
     - `-j, --json`
     - `--no-cache`
 - `gyazo apps`

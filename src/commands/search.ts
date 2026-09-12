@@ -5,6 +5,7 @@ import type { Command } from 'commander';
 import { searchImages } from '../api';
 import { ensureAccessToken } from '../credentials';
 import { normalizeText } from '../format';
+import { parsePositiveIntegerOption } from '../options';
 
 import { cacheSearchResultImages } from '../services/memory';
 import {
@@ -16,6 +17,8 @@ export function registerSearchCommand(program: Command): void {
   program
     .command('search [query]')
     .description('Search images')
+    .option('-p, --page <number>', 'page number', '1')
+    .option('-l, --limit <number>', 'items per page', '20')
     .option('-j, --json', 'output as JSON')
     .option('--no-cache', 'force fetch from API')
     .action(async (query, options) => {
@@ -27,7 +30,9 @@ export function registerSearchCommand(program: Command): void {
           process.exit(1);
         }
 
-        const images = await searchImages(query);
+        const page = parsePositiveIntegerOption(options.page, '--page');
+        const limit = parsePositiveIntegerOption(options.limit, '--limit');
+        const images = await searchImages(query, page, limit);
         const useCache = options.cache !== false;
         if (options.json) {
           cacheSearchResultImages(images);

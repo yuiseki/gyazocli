@@ -109,6 +109,65 @@ test('list exits non-zero when the API returns an error', async () => {
   }
 });
 
+test('search asks for the page and the page size it was given', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify([]));
+  });
+  try {
+    const first = await runCli(cacheDir, ['search', 'cat', '--json'], { apiOrigin: stub.origin });
+    expect(first.status).toBe(0);
+    const third = await runCli(cacheDir, ['search', 'cat', '--page', '3', '--json'], {
+      apiOrigin: stub.origin,
+    });
+    expect(third.status).toBe(0);
+
+    const sized = await runCli(cacheDir, ['search', 'cat', '--limit', '50', '--json'], {
+      apiOrigin: stub.origin,
+    });
+    expect(sized.status).toBe(0);
+
+    const asked = stub.requests
+      .filter((request) => request.url.startsWith('/api/search'))
+      .map((request) => {
+        const params = new URL(request.url, 'http://127.0.0.1').searchParams;
+        return `${params.get('page')}/${params.get('per')}`;
+      });
+    // The API calls the page size `per`, and the default matches `ls`.
+    expect(asked).toEqual(['1/20', '3/20', '1/50']);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('search rejects a page or a limit that is not a positive integer', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify([]));
+  });
+  try {
+    for (const page of ['0', '-1', 'two']) {
+      const result = await runCli(cacheDir, ['search', 'cat', '--page', page], {
+        apiOrigin: stub.origin,
+      });
+      expect(result.status, `--page ${page}`).toBe(1);
+      expect(result.stderr).toMatch(/--page must be a positive integer/);
+    }
+    for (const limit of ['0', '-1', 'many']) {
+      const result = await runCli(cacheDir, ['search', 'cat', '--limit', limit], {
+        apiOrigin: stub.origin,
+      });
+      expect(result.status, `--limit ${limit}`).toBe(1);
+      expect(result.stderr).toMatch(/--limit must be a positive integer/);
+    }
+    expect(stub.requests).toHaveLength(0);
+  } finally {
+    await stub.close();
+  }
+});
+
 test('search exits non-zero when the API returns an error', async () => {
   const cacheDir = createTempCacheDir();
   const stub = await startStubServer((_req, res) => {

@@ -48,6 +48,7 @@ gyazo search 'app:"Gyazo Android"'             # the application it came from
 gyazo search "ocr:Wi-Fi has:exif"              # terms are ANDed
 gyazo search "address:広島 OR address:京都"     # capital OR
 gyazo search "has:location -app:Chrome"        # leading - negates
+gyazo search "has:exif" --page 2 --limit 50    # 20 per page by default
 ```
 
 Three things worth knowing before composing a query:
