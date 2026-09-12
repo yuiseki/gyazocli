@@ -129,7 +129,8 @@ results back from the detail endpoint to confirm the filter had applied:
 | `title:`, `url:`, `desc:` | the page it was captured from |
 | `ocr:` | the text in the image |
 | `type:png` | the file type |
-| `since:2026-08-30 until:2026-08-31` | the upload date |
+| `date:2026-08-30`, `date:2026-08`, `date:2026` | the upload date, by day, month or year |
+| `since:2026-08-30 until:2026-08-31` | the upload date, as a range |
 | `-address:広島` | negation |
 | `OR` | alternation; terms are ANDed otherwise |
 
@@ -194,6 +195,22 @@ Tool names and arguments follow
 already configured against that server can point at this one instead. Its
 `gyazo_upload` is deliberately absent: nothing here can write to your Gyazo
 account until there is a reason for it to.
+
+## Agent skill
+
+`skills/gyazo/` is a skill for coding agents that drive the CLI: what the
+commands are, what the search syntax actually accepts, and the judgement calls
+that keep a capture from becoming a claim it does not support. It ships in the
+npm package.
+
+Install it for Claude Code by copying it where the agent looks for skills:
+
+```bash
+mkdir -p ~/.claude/skills
+cp -r "$(npm root -g)/@yuiseki/gyazocli/skills/gyazo" ~/.claude/skills/
+```
+
+Per project instead of per user, copy it to `.claude/skills/` in the project.
 
 ## Development
 
