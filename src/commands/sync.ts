@@ -2,7 +2,7 @@
  * The `sync` command, which fills the cache.
  */
 import type { Command } from 'commander';
-import { listImages, getImageDetail } from '../api';
+import { listImages, searchImages, getImageDetail } from '../api';
 import {
   saveImageCache,
   loadImageCache,
@@ -20,10 +20,22 @@ export function registerSyncCommand(program: Command): void {
     .option('--days <number>', 'number of days to sync (used when --date is omitted)')
     .option('--date <yyyy|yyyy-mm|yyyy-mm-dd>', 'sync only this date/month/year range')
     .option('--max-pages <number>', 'max pages to fetch', '10')
+    .option('--query <query>', 'fill the cache from a search instead of the listing')
     .action(async (options) => {
       await ensureAccessToken();
       if (options.date && options.days) {
         console.error('Error: --date and --days cannot be used together.');
+        process.exit(1);
+      }
+      if (options.query && (options.date || options.days)) {
+        // Search results are not ordered the same way for every query: a plain
+        // query comes back newest first, while a `date:` one starts at the
+        // beginning of its range. Nothing here can bound a walk by date
+        // safely, and the query language can: put the range in the query.
+        console.error('Error: --query cannot be used with --date or --days.');
+        console.error('Hint: bound the range inside the query, as');
+        console.error('  --query "has:exif date:2026-08"');
+        console.error('  --query "has:exif since:2026-08-01 until:2026-08-31"');
         process.exit(1);
       }
 
@@ -48,24 +60,32 @@ export function registerSyncCommand(program: Command): void {
         startDate.setHours(0, 0, 0, 0);
       }
 
-      console.log(`Syncing images between ${startDate.toISOString()} and ${endDate.toISOString()}...`);
+      if (options.query) {
+        console.log(`Syncing images matching ${JSON.stringify(options.query)}...`);
+      } else {
+        console.log(`Syncing images between ${startDate.toISOString()} and ${endDate.toISOString()}...`);
+      }
 
       const hourlyIndices: Map<string, Set<string>> = new Map();
 
       for (let page = 1; page <= maxPages; page++) {
-        const images = await listImages(page, 100);
+        const images = options.query
+          ? await searchImages(options.query, page, 100)
+          : await listImages(page, 100);
         if (images.length === 0) break;
 
         let reachedLimit = false;
         for (const img of images) {
           const createdAt = new Date(img.created_at);
 
-          if (createdAt > endDate) {
+          // A query says for itself what it covers, and the results are not
+          // ordered predictably enough to stop early on a date.
+          if (!options.query && createdAt > endDate) {
             // Skip images newer than target range.
             continue;
           }
 
-          if (createdAt < startDate) {
+          if (!options.query && createdAt < startDate) {
             reachedLimit = true;
             break;
           }

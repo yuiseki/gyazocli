@@ -97,11 +97,19 @@ endpoint returns the first 100 and cannot page.
 ```bash
 gyazo sync --days 7                  # yesterday back through 7 days
 gyazo sync --date 2026-08            # a whole month
+gyazo sync --query "has:exif OR has:location" --max-pages 20
 ```
 
 `sync` covers yesterday backwards and never today, because today is still
 happening. For anything from today use `ls --today`, `search`, or a ranking
 command with `--today`.
+
+`--query` fills the cache from a search instead of the listing, which is how to
+gather one kind of capture without walking past everything else: photographs
+are a small fraction of a day's screenshots. Put any date range inside the
+query (`date:2026-08`, `since:... until:...`) rather than in `--date`, which
+`--query` refuses. Budget about 40 seconds per page of 100 captures that are
+not cached yet.
 
 ## Answering questions with captures
 

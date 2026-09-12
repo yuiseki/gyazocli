@@ -109,6 +109,81 @@ test('list exits non-zero when the API returns an error', async () => {
   }
 });
 
+// --- sync over a query ------------------------------------------------------
+
+test('sync --query walks the search endpoint and caches what it finds', async () => {
+  const cacheDir = createTempCacheDir();
+  const pageOf = (prefix: string) =>
+    Array.from({ length: 2 }, (_, index) => ({
+      image_id: `${prefix}${String(index).padStart(30, '0')}`,
+      permalink_url: `https://gyazo.com/${prefix}${String(index).padStart(30, '0')}`,
+      url: `https://i.gyazo.com/${prefix}${String(index).padStart(30, '0')}.jpg`,
+      type: 'jpg',
+      created_at: '2026-08-30T02:34:56+0900',
+      metadata: { app: 'Gyazo Android' },
+    }));
+
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url.pathname === '/api/search') {
+      const page = Number(url.searchParams.get('page') || '1');
+      res.end(JSON.stringify(page === 1 ? pageOf('aa') : page === 2 ? pageOf('bb') : []));
+      return;
+    }
+    if (url.pathname.startsWith('/api/images/')) {
+      const id = url.pathname.split('/').pop();
+      res.end(JSON.stringify({ image_id: id, created_at: '2026-08-30T02:34:56+0900', ocr: { description: 'x' } }));
+      return;
+    }
+    res.end(JSON.stringify([]));
+  });
+
+  try {
+    const result = await runCli(
+      cacheDir,
+      ['sync', '--query', 'has:exif OR has:location', '--max-pages', '2'],
+      { apiOrigin: stub.origin },
+    );
+    expect(result.status).toBe(0);
+
+    const searches = stub.requests.filter((request) => request.url.startsWith('/api/search'));
+    expect(searches).toHaveLength(2);
+    const first = new URL(searches[0].url, 'http://127.0.0.1').searchParams;
+    expect(first.get('query')).toBe('has:exif OR has:location');
+    expect(first.get('per')).toBe('100');
+    expect(first.get('page')).toBe('1');
+    // The listing endpoint is not touched at all on this path.
+    expect(stub.requests.some((request) => request.url.startsWith('/api/images?'))).toBe(false);
+
+    // Every capture it found is in the cache, under its own id.
+    for (const prefix of ['aa', 'bb']) {
+      const id = `${prefix}${'0'.repeat(30)}`;
+      const cached = path.join(cacheDir, 'images', id[0], id[1], `${id}.json`);
+      expect(fs.existsSync(cached), `${id} should be cached`).toBe(true);
+    }
+    // And in the hourly index for the hour it was captured in.
+    const hourly = path.join(cacheDir, 'hourly', '2026', '08', '30', '02.json');
+    expect(fs.existsSync(hourly)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(hourly, 'utf8'))).toHaveLength(4);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('sync --query refuses a date range, and names what to use instead', async () => {
+  const cacheDir = createTempCacheDir();
+  for (const args of [
+    ['sync', '--query', 'has:exif', '--days', '7'],
+    ['sync', '--query', 'has:exif', '--date', '2026-08'],
+  ]) {
+    const result = await runCli(cacheDir, args);
+    expect(result.status, args.join(' ')).toBe(1);
+    expect(result.stderr).toMatch(/--query cannot be used with --date or --days/);
+    expect(result.stderr).toMatch(/date:|since:/);
+  }
+});
+
 test('search asks for the page and the page size it was given', async () => {
   const cacheDir = createTempCacheDir();
   const stub = await startStubServer((_req, res) => {

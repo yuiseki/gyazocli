@@ -118,6 +118,8 @@ Adopt and document the existing top-level command structure.
     - `--days <number>` (default: `1`, used when `--date` is omitted)
     - `--date <yyyy|yyyy-mm|yyyy-mm-dd>`
     - `--max-pages <number>` (default: `10`)
+    - `--query <query>` (fill from a search instead of the listing; not with
+      `--date` or `--days`, because the range belongs inside the query)
 - `gyazo import <type> <dir>`
   - Supported types: `json`, `hourly`
 
