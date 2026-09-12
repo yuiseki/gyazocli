@@ -27,7 +27,8 @@
     "build": "npx tsc",
     "prepack": "npm run build",
     "test": "npm run build && vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "skill:install": "node scripts/install-skill.mjs"
   },
   "publishConfig": {
     "access": "public"

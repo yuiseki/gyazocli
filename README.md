@@ -203,14 +203,25 @@ commands are, what the search syntax actually accepts, and the judgement calls
 that keep a capture from becoming a claim it does not support. It ships in the
 npm package.
 
-Install it for Claude Code by copying it where the agent looks for skills:
+Install it where the agent looks for skills. From an installed package:
 
 ```bash
 mkdir -p ~/.claude/skills
 cp -r "$(npm root -g)/@yuiseki/gyazocli/skills/gyazo" ~/.claude/skills/
 ```
 
-Per project instead of per user, copy it to `.claude/skills/` in the project.
+From a checkout, `npm run skill:install` copies it into `.claude/skills/` here,
+and takes a destination for anywhere else:
+
+```bash
+npm run skill:install                      # this repository
+npm run skill:install ~/.claude/skills     # every project
+npm run skill:install ../other/.claude/skills
+```
+
+It copies rather than symlinks, so an installed skill survives this repository
+moving or going away. The copy under `.claude/skills/` is committed, and a test
+fails when it drifts from `skills/`.
 
 ## Development
 
