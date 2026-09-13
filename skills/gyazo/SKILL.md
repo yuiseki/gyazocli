@@ -25,6 +25,7 @@ gyazo ls --hour 2026-08-30-14        # one hour, from the cache only
 gyazo ls --photos                    # shorthand for has:location
 gyazo get <image_id>                 # one capture in detail
 gyazo get <image_id> --ocr           # just the OCR text
+gyazo get <image_id> --objects       # just what was detected in it
 gyazo <image_id>                     # same as get
 gyazo <https://gyazo.com/...>        # same as get
 gyazo ./screenshot.png               # an existing file uploads instead
@@ -98,6 +99,7 @@ endpoint returns the first 100 and cannot page.
 gyazo sync --days 7                  # yesterday back through 7 days
 gyazo sync --date 2026-08            # a whole month
 gyazo sync --query "has:exif OR has:location" --max-pages 20
+gyazo sync --query "has:exif" --max-pages 20 --continue   # carry on from last time
 ```
 
 `sync` covers yesterday backwards and never today, because today is still
@@ -108,8 +110,16 @@ command with `--today`.
 gather one kind of capture without walking past everything else: photographs
 are a small fraction of a day's screenshots. Put any date range inside the
 query (`date:2026-08`, `since:... until:...`) rather than in `--date`, which
-`--query` refuses. Budget about 40 seconds per page of 100 captures that are
-not cached yet.
+`--query` refuses.
+
+A capture already in the cache is not fetched again, so a repeated sync costs
+only the search pages: 100 cached captures take under a second, 100 new ones
+about 40 seconds. `--continue` remembers how far back the last walk of that
+query reached and resumes with `until:<that day>`, which is how to backfill a
+long history a few hundred pages at a time without asking for the same pages
+twice. Gyazo rate-limits without documenting it, so prefer resuming over
+re-walking, and leave `--refresh` alone unless a capture really needs
+re-fetching.
 
 ## Answering questions with captures
 
@@ -119,9 +129,10 @@ not cached yet.
   work, and `ls --date` over a wide range walks many pages.
 - OCR text is noisy: it comes from screenshots at whatever resolution, and
   `locale` is often `und`. Treat it as a hint, not a transcript.
-- `get --objects` prints detected objects, but the API no longer returns the
-  field it reads, so it exits non-zero with "Object annotations not found" on
-  every capture tested. Use the OCR text instead.
+- `get --objects` prints what was detected in the image, with a confidence.
+  About 59% of captures carry annotations; the rest exit non-zero with "Object
+  annotations not found", which means this capture has none, not that the
+  command is broken. `--ocr` and `--objects` cannot be combined.
 - **Do not turn a capture into a claim it does not support.** A product page or
   a cart is interest; an order confirmation or a payment receipt is a purchase.
   Say which capture the conclusion rests on.
