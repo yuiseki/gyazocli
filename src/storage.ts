@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import os from 'os';
 
 export function getCacheDir(): string {
@@ -121,4 +122,37 @@ export function loadHourlyMetadataCache(
     return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
   }
   return null;
+}
+
+/**
+ * Where a walk of a query got to, so the next one can pick up instead of
+ * asking the API for pages it has already seen. Keyed by the query itself.
+ */
+export interface SyncState {
+  query: string;
+  oldestDay: string;
+  updatedAt: string;
+}
+
+function getSyncStatePath(query: string): string {
+  const dir = path.join(getCacheDir(), 'sync');
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const key = crypto.createHash('sha1').update(query).digest('hex');
+  return path.join(dir, `${key}.json`);
+}
+
+export function loadSyncState(query: string): SyncState | null {
+  const file = getSyncStatePath(query);
+  if (!fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+export function saveSyncState(state: SyncState): void {
+  fs.writeFileSync(getSyncStatePath(state.query), JSON.stringify(state, null, 2));
 }

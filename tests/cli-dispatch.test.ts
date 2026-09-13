@@ -4,8 +4,8 @@ import path from 'node:path';
 import {
   createTempCacheDir,
   runCli,
-  startStubServer,
   writeImageCache,
+  startStubServer,
   type StubHandler,
 } from './helpers';
 
@@ -185,6 +185,142 @@ test('sync --query walks the search endpoint and caches what it finds', async ()
     );
     expect(fs.existsSync(hourly)).toBe(true);
     expect(JSON.parse(fs.readFileSync(hourly, 'utf8'))).toHaveLength(4);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('sync --continue resumes where the last walk stopped', async () => {
+  const cacheDir = createTempCacheDir();
+  const day = (offset: number) => {
+    const at = new Date();
+    at.setDate(at.getDate() - offset);
+    return at;
+  };
+  const capture = (prefix: string, at: Date) => ({
+    image_id: `${prefix}${'0'.repeat(30)}`,
+    permalink_url: `https://gyazo.com/${prefix}${'0'.repeat(30)}`,
+    url: `https://i.gyazo.com/${prefix}${'0'.repeat(30)}.jpg`,
+    type: 'jpg',
+    created_at: at.toISOString(),
+    metadata: { app: 'Gyazo Android' },
+  });
+  const oldest = day(10);
+
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url.pathname === '/api/search') {
+      const page = Number(url.searchParams.get('page') || '1');
+      res.end(JSON.stringify(page === 1 ? [capture('ee', day(1)), capture('ff', oldest)] : []));
+      return;
+    }
+    const id = url.pathname.split('/').pop();
+    res.end(JSON.stringify({ image_id: id, created_at: oldest.toISOString() }));
+  });
+
+  try {
+    const first = await runCli(cacheDir, ['sync', '--query', 'has:exif', '--max-pages', '1'], {
+      apiOrigin: stub.origin,
+    });
+    expect(first.status).toBe(0);
+
+    const resumed = await runCli(
+      cacheDir,
+      ['sync', '--query', 'has:exif', '--max-pages', '1', '--continue'],
+      { apiOrigin: stub.origin },
+    );
+    expect(resumed.status).toBe(0);
+    // It says where it picked up, and asks the API for that window.
+    expect(resumed.stdout).toMatch(/until:/);
+
+    const queries = stub.requests
+      .filter((request) => request.url.startsWith('/api/search'))
+      .map((request) => new URL(request.url, 'http://127.0.0.1').searchParams.get('query'));
+    const pad = (value: number) => String(value).padStart(2, '0');
+    const oldestDay = `${oldest.getFullYear()}-${pad(oldest.getMonth() + 1)}-${pad(oldest.getDate())}`;
+    expect(queries[0]).toBe('has:exif');
+    expect(queries[queries.length - 1]).toBe(`has:exif until:${oldestDay}`);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('sync --continue refuses a query that already bounds its own dates', async () => {
+  const cacheDir = createTempCacheDir();
+  const result = await runCli(cacheDir, [
+    'sync',
+    '--query',
+    'has:exif until:2026-08-01',
+    '--continue',
+  ]);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toMatch(/--continue/);
+  expect(result.stderr).toMatch(/date:|since:|until:/);
+});
+
+test('sync does not fetch a capture it already has', async () => {
+  const cacheDir = createTempCacheDir();
+  const id = `cc${'0'.repeat(30)}`;
+  const lean = {
+    image_id: id,
+    permalink_url: `https://gyazo.com/${id}`,
+    url: `https://i.gyazo.com/${id}.jpg`,
+    type: 'jpg',
+    created_at: new Date().toISOString(),
+    metadata: { app: 'Gyazo Android' },
+  };
+  // A cached detail as the API really returns it: the OCR text is under
+  // metadata, and the top-level ocr field is null.
+  writeImageCache(cacheDir, id, {
+    ...lean,
+    ocr: null,
+    metadata: { app: 'Gyazo Android', ocr: { locale: 'und', description: 'すでに取得済み' } },
+  });
+
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(url.pathname === '/api/search' ? [lean] : lean));
+  });
+
+  try {
+    const result = await runCli(cacheDir, ['sync', '--query', 'has:exif', '--max-pages', '1'], {
+      apiOrigin: stub.origin,
+    });
+    expect(result.status).toBe(0);
+    // The search page is fetched; the detail behind it is not.
+    expect(stub.requests.some((request) => request.url.startsWith('/api/search'))).toBe(true);
+    expect(stub.requests.filter((request) => request.url.startsWith('/api/images/'))).toHaveLength(0);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('sync --refresh fetches it anyway', async () => {
+  const cacheDir = createTempCacheDir();
+  const id = `dd${'0'.repeat(30)}`;
+  const lean = {
+    image_id: id,
+    permalink_url: `https://gyazo.com/${id}`,
+    url: `https://i.gyazo.com/${id}.jpg`,
+    type: 'jpg',
+    created_at: new Date().toISOString(),
+    metadata: { app: 'Gyazo Android' },
+  };
+  writeImageCache(cacheDir, id, { ...lean, metadata: { ocr: { description: 'old' } } });
+
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(url.pathname === '/api/search' ? [lean] : lean));
+  });
+
+  try {
+    await runCli(cacheDir, ['sync', '--query', 'has:exif', '--max-pages', '1', '--refresh'], {
+      apiOrigin: stub.origin,
+    });
+    expect(stub.requests.filter((request) => request.url.startsWith('/api/images/'))).toHaveLength(1);
   } finally {
     await stub.close();
   }

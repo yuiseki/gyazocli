@@ -120,6 +120,8 @@ Adopt and document the existing top-level command structure.
     - `--max-pages <number>` (default: `10`)
     - `--query <query>` (fill from a search instead of the listing; not with
       `--date` or `--days`, because the range belongs inside the query)
+    - `--refresh` (fetch every capture again, even one already cached)
+    - `--continue` (resume the last walk of this query, with `--query`)
 - `gyazo import <type> <dir>`
   - Supported types: `json`, `hourly`
 
