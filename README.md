@@ -196,6 +196,27 @@ already configured against that server can point at this one instead. Its
 `gyazo_upload` is deliberately absent: nothing here can write to your Gyazo
 account until there is a reason for it to.
 
+## Triage
+
+Going through captures one at a time, deciding something about each:
+
+```bash
+gyazo triage -q "password"
+gyazo triage --id <image_id>          # revisit one
+```
+
+It prints everything a capture carries as markdown, one heading per field, and
+at a terminal asks `Is it safe? [Y/n]` after each. Answers are appended to
+`${XDG_STATE_HOME:-~/.local/state}/gyazocli/triage.jsonl`, outside the cache,
+and a capture already answered is skipped next time.
+
+Answering `n` sets that capture to `only_me`. The public API takes
+`access_policy` at upload and has no endpoint that changes it afterwards, so
+this needs gyazo.com cookies, from `GYAZO_COOKIE_FILE` or
+`~/.config/gyazo/cookie.json` (a browser export works as-is). Without them it
+prints the capture's page URL instead and says nothing was changed, and
+`--no-apply` turns the change off entirely.
+
 ## Agent skill
 
 `skills/gyazo/` is a skill for coding agents that drive the CLI: what the
