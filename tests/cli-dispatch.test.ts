@@ -425,8 +425,9 @@ test('triage shows the access policy when the capture has one', async () => {
     // First field of the section, so it is read before a wall of OCR text.
     expect(sections[0]).toMatch(/^## access_policy$\n\nonly_me$/m);
     expect(sections[1]).toMatch(/^## access_policy$\n\nanyone$/m);
-    // Null is not a value: the API leaves this unset on most captures.
-    expect(sections[2]).not.toMatch(/^## access_policy$/m);
+    // Unset means the default, which is anyone, and saying so beats silence
+    // when the reader is looking for the ones that are not.
+    expect(sections[2]).toMatch(/^## access_policy$\n\nanyone$/m);
     expect(sections[2]).not.toContain('null');
   } finally {
     await stub.close();

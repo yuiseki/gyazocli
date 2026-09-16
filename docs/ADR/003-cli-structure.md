@@ -66,6 +66,9 @@ Adopt and document the existing top-level command structure.
       stdin and stdout are a terminal)
     - `--again` (ask again about captures already answered)
     - `--no-cache`
+  - `access_policy` is printed first, and an unset one is printed as `anyone`:
+    the API leaves it unset on most captures, and a reader looking for
+    `only_me` is better served by every section saying which it is
   - Captures already answered are skipped, and the walk continues to the next
     page rather than stopping: a page where everything has been answered is not
     the end of the results
