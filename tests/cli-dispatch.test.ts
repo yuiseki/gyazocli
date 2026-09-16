@@ -109,6 +109,47 @@ test('list exits non-zero when the API returns an error', async () => {
   }
 });
 
+// --- an access token that is no longer accepted ----------------------------
+
+/** Every authenticated endpoint answering the way a revoked token gets answered. */
+function unauthorizedStub(): StubHandler {
+  return (_req, res) => {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ message: 'You are not authorized.' }));
+  };
+}
+
+test('a rejected token is reported as a rejected token', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer(unauthorizedStub());
+  try {
+    for (const args of [['config', 'get', 'me'], ['ls'], ['search', 'cat']]) {
+      const result = await runCli(cacheDir, args, { apiOrigin: stub.origin });
+      expect(result.status, args.join(' ')).toBe(1);
+      // Not just the status code: what it means and what to do about it.
+      expect(result.stderr, args.join(' ')).toMatch(/access token/i);
+      expect(result.stderr, args.join(' ')).toMatch(/gyazo config set token/);
+    }
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a 503 from image delivery says the image is unavailable, not that the id is wrong', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer((_req, res) => {
+    res.writeHead(503, { 'Content-Type': 'text/plain' });
+    res.end('this content is temporarily unavailable');
+  });
+  try {
+    const result = await runCli(cacheDir, ['get', 'a'.repeat(32)], { apiOrigin: stub.origin });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/temporarily unavailable|503/i);
+  } finally {
+    await stub.close();
+  }
+});
+
 // --- sync over a query ------------------------------------------------------
 
 test('sync --query walks the search endpoint and caches what it finds', async () => {

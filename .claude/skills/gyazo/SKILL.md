@@ -13,6 +13,11 @@ questions about the same period are answered locally.
 Check `gyazo config get me` first when a token might be missing; it prints the
 account or exits non-zero. Set one with `gyazo config set token <token>`.
 
+A 401 means Gyazo will not take the token that is there, which is a different
+problem from not having one: it has been mistyped or revoked. Say so and stop,
+rather than retrying or reaching for another command; every authenticated path
+will answer the same way.
+
 Every command exits non-zero on failure, so `&&` chains and `set -e` behave.
 
 ## Reading captures

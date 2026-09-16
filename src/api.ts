@@ -86,6 +86,17 @@ async function requestWithRetry(url: string, params: any = {}, headers?: Record<
     const response = await axios.get(url, { headers: requestHeaders, params });
     return response.data;
   } catch (error: any) {
+    if (error.response && error.response.status === 401) {
+      // The status alone reads as a bug in the caller. It is not: the token
+      // is present and Gyazo will not take it. That happens when it is
+      // mistyped, when it has been revoked, and when Gyazo revokes tokens in
+      // bulk, as it did after the 2026-09-11 incident.
+      throw new Error(
+        'Gyazo rejected the access token (401). Issue a new one at ' +
+          'https://gyazo.com/oauth/applications and save it with ' +
+          '`gyazo config set token <token>`.',
+      );
+    }
     if (error.response && error.response.status === 429) {
       const retryAfter = parseInt(error.response.headers['retry-after'] || '5', 10);
       console.warn(`Rate limited. Retrying after ${retryAfter} seconds...`);
