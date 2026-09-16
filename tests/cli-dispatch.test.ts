@@ -109,6 +109,93 @@ test('list exits non-zero when the API returns an error', async () => {
   }
 });
 
+// --- triage -----------------------------------------------------------------
+
+test('triage renders each capture as markdown, one heading per field it has', async () => {
+  const cacheDir = createTempCacheDir();
+  const id = `77${'0'.repeat(30)}`;
+  const lean = {
+    image_id: id,
+    permalink_url: `https://gyazo.com/${id}`,
+    url: `https://i.gyazo.com/${id}.png`,
+    type: 'png',
+    created_at: '2026-09-01T12:00:00+0000',
+    metadata: { app: 'Google Chrome' },
+  };
+  const detail = {
+    ...lean,
+    metadata: {
+      app: 'Google Chrome',
+      title: 'Login',
+      url: 'https://example.com/login',
+      desc: '',
+      ocr: { locale: 'en', description: 'password: hunter2' },
+      exif_normalized: { latitude: 35.68, longitude: 139.76 },
+    },
+  };
+
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(url.pathname === '/api/search' ? [lean] : detail));
+  });
+
+  try {
+    const result = await runCli(cacheDir, ['triage', '-q', 'password'], { apiOrigin: stub.origin });
+    expect(result.status).toBe(0);
+
+    const out = result.stdout;
+    // One section per capture, keyed by its id, and the query it came from.
+    expect(out).toMatch(/^# /m);
+    expect(out).toContain('password');
+    expect(out).toContain(id);
+    // Keys as headings, values as content.
+    expect(out).toMatch(/^### ocr$/m);
+    expect(out).toContain('password: hunter2');
+    expect(out).toMatch(/^### app$/m);
+    expect(out).toContain('Google Chrome');
+    expect(out).toMatch(/^### title$/m);
+    // A field the capture does not carry gets no heading.
+    expect(out).not.toMatch(/^### desc$/m);
+    expect(out).not.toMatch(/^### alt_text$/m);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('triage says so when nothing matches', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify([]));
+  });
+  try {
+    const result = await runCli(cacheDir, ['triage', '-q', 'nothing-matches-this'], {
+      apiOrigin: stub.origin,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/no captures|見つかりません|0 captures/i);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('triage takes the query as a bare argument too', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify([]));
+  });
+  try {
+    const result = await runCli(cacheDir, ['triage', 'password'], { apiOrigin: stub.origin });
+    expect(result.status).toBe(0);
+    const asked = stub.requests.find((request) => request.url.startsWith('/api/search'));
+    expect(new URL(asked!.url, 'http://127.0.0.1').searchParams.get('query')).toBe('password');
+  } finally {
+    await stub.close();
+  }
+});
+
 // --- an access token that is no longer accepted ----------------------------
 
 /** Every authenticated endpoint answering the way a revoked token gets answered. */
