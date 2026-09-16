@@ -60,7 +60,15 @@ Adopt and document the existing top-level command structure.
     - `-p, --page <number>` (default: `1`)
     - `-l, --limit <number>` (default: `20`)
     - `--color <auto|always|never>` (default: `auto`, meaning a terminal)
+    - `-i, --interactive` / `--no-interactive` (default: interactive when both
+      stdin and stdout are a terminal)
+    - `--again` (ask again about captures already answered)
     - `--no-cache`
+  - Interactive mode asks `Is it safe? [Y/n]` per capture. Enter takes the
+    default, `n` marks it unsafe, `q` or end of input stops and keeps what was
+    answered. Answers are appended to
+    `${XDG_STATE_HOME:-~/.local/state}/gyazocli/triage.jsonl`, outside the
+    cache, because a judgement cannot be fetched again
 - `gyazo apps`
   - Default range: from 8 days ago to yesterday
   - Options:

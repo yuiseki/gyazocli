@@ -212,6 +212,91 @@ test('triage separates captures with a rule, and colours the id on request', asy
   }
 });
 
+test('triage asks about each capture and records the answers', async () => {
+  const cacheDir = createTempCacheDir();
+  const captures = ['a1', 'a2', 'a3'].map((prefix) => ({
+    image_id: `${prefix}${'0'.repeat(30)}`,
+    permalink_url: `https://gyazo.com/${prefix}${'0'.repeat(30)}`,
+    url: `https://i.gyazo.com/${prefix}${'0'.repeat(30)}.png`,
+    type: 'png',
+    created_at: '2026-09-01T12:00:00+0000',
+    metadata: { app: 'Google Chrome', ocr: { description: 'secret' } },
+  }));
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url.pathname === '/api/search') {
+      res.end(JSON.stringify(captures));
+      return;
+    }
+    const id = url.pathname.split('/').pop();
+    res.end(JSON.stringify(captures.find((capture) => capture.image_id === id)));
+  });
+
+  try {
+    // Enter takes the default, then a no, then a quit.
+    const result = await runCli(cacheDir, ['triage', '-q', 'secret', '--interactive'], {
+      apiOrigin: stub.origin,
+      input: '\nn\nq\n',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/Is it safe\? \[Y\/n\]/);
+
+    const ledger = path.join(cacheDir, '.local', 'state', 'gyazocli', 'triage.jsonl');
+    expect(fs.existsSync(ledger), 'the answers are written down').toBe(true);
+    const entries = fs
+      .readFileSync(ledger, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ image_id: captures[0].image_id, verdict: 'safe' });
+    expect(entries[1]).toMatchObject({ image_id: captures[1].image_id, verdict: 'unsafe' });
+    // Quitting stops before the third, and says where the answers went.
+    expect(result.stdout).toContain('triage.jsonl');
+  } finally {
+    await stub.close();
+  }
+});
+
+test('triage does not ask twice about the same capture', async () => {
+  const cacheDir = createTempCacheDir();
+  const capture = {
+    image_id: `b1${'0'.repeat(30)}`,
+    permalink_url: `https://gyazo.com/b1${'0'.repeat(30)}`,
+    url: `https://i.gyazo.com/b1${'0'.repeat(30)}.png`,
+    type: 'png',
+    created_at: '2026-09-01T12:00:00+0000',
+    metadata: { app: 'Google Chrome' },
+  };
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(url.pathname === '/api/search' ? [capture] : capture));
+  });
+
+  try {
+    await runCli(cacheDir, ['triage', '-q', 'x', '--interactive'], {
+      apiOrigin: stub.origin,
+      input: 'y\n',
+    });
+    const second = await runCli(cacheDir, ['triage', '-q', 'x', '--interactive'], {
+      apiOrigin: stub.origin,
+      input: '',
+    });
+    expect(second.stdout).toMatch(/already|判定済み|nothing left/i);
+    expect(second.stdout).not.toMatch(/Is it safe/);
+
+    const asked = await runCli(cacheDir, ['triage', '-q', 'x', '--interactive', '--again'], {
+      apiOrigin: stub.origin,
+      input: 'y\n',
+    });
+    expect(asked.stdout).toMatch(/Is it safe/);
+  } finally {
+    await stub.close();
+  }
+});
+
 test('triage says so when nothing matches', async () => {
   const cacheDir = createTempCacheDir();
   const stub = await startStubServer((_req, res) => {
