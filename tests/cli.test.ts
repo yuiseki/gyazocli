@@ -1,4 +1,5 @@
 import { test, expect } from 'vitest';
+import { runCli as runCliAsync, startStubServer } from './helpers';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -605,6 +606,58 @@ test('list rejects incompatible alias options', () => {
   const result = runCli(cacheDir, ['ls', '--photos', '--uploaded']);
   expect(result.status).toBe(1);
   expect(result.stderr).toMatch(/--photos and --uploaded cannot be used together/);
+});
+
+test('config set token checks the token before saving it', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer((req, res) => {
+    const auth = req.headers.authorization || '';
+    if (auth === 'Bearer good-token') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ user: { uid: 'u1', name: 'yuiseki' } }));
+      return;
+    }
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ message: 'You are not authorized.' }));
+  });
+
+  try {
+    const rejected = await runCliAsync(cacheDir, ['config', 'set', 'token', 'bad-token'], {
+      apiOrigin: stub.origin,
+    });
+    expect(rejected.status).toBe(1);
+    expect(rejected.stderr).toMatch(/rejected|not accepted|invalid/i);
+    // Nothing was written, so the token that used to work still does.
+    expect(fs.existsSync(path.join(cacheDir, '.config', 'gyazo', 'credentials.json'))).toBe(false);
+
+    const accepted = await runCliAsync(cacheDir, ['config', 'set', 'token', 'good-token'], {
+      apiOrigin: stub.origin,
+    });
+    expect(accepted.status).toBe(0);
+    expect(fs.existsSync(path.join(cacheDir, '.config', 'gyazo', 'credentials.json'))).toBe(true);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('config set token --no-verify saves without asking Gyazo', async () => {
+  const cacheDir = createTempCacheDir();
+  const stub = await startStubServer((_req, res) => {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ message: 'You are not authorized.' }));
+  });
+  try {
+    const result = await runCliAsync(
+      cacheDir,
+      ['config', 'set', 'token', 'unchecked', '--no-verify'],
+      { apiOrigin: stub.origin },
+    );
+    expect(result.status).toBe(0);
+    expect(stub.requests).toHaveLength(0);
+    expect(fs.existsSync(path.join(cacheDir, '.config', 'gyazo', 'credentials.json'))).toBe(true);
+  } finally {
+    await stub.close();
+  }
 });
 
 test('search without query prints hint', () => {

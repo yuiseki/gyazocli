@@ -16,7 +16,8 @@ account or exits non-zero. Set one with `gyazo config set token <token>`.
 A 401 means Gyazo will not take the token that is there, which is a different
 problem from not having one: it has been mistyped or revoked. Say so and stop,
 rather than retrying or reaching for another command; every authenticated path
-will answer the same way.
+will answer the same way. `config set token` checks a token against the API
+before saving it, so a bad one cannot quietly replace a working one.
 
 Every command exits non-zero on failure, so `&&` chains and `set -e` behave.
 

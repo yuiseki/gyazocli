@@ -3,6 +3,7 @@
  */
 import type { Command } from 'commander';
 import { getCurrentUser } from '../api';
+import { setAccessToken } from '../config';
 import { ensureAccessToken, getStoredConfig, setStoredConfig } from '../credentials';
 
 export function registerConfigCommand(program: Command): void {
@@ -11,7 +12,23 @@ export function registerConfigCommand(program: Command): void {
   configCmd
     .command('set <key> <value>')
     .description('Set a configuration value')
-    .action((key, value) => {
+    .option('--no-verify', 'save a token without checking it against the API first')
+    .action(async (key, value, options) => {
+      // A token that Gyazo will not accept is worth catching here rather than
+      // at the next command: the page it comes from shows several strings of
+      // the same shape, and a saved bad token replaces a good one.
+      if (key === 'token' && options.verify !== false) {
+        setAccessToken(value);
+        try {
+          await getCurrentUser();
+        } catch (error: any) {
+          console.error(`Error: this token was not accepted. ${error.message}`);
+          console.error('Nothing was saved. Check that the value is the access token');
+          console.error('from https://gyazo.com/oauth/applications, not the client ID or secret.');
+          console.error('Save it anyway with --no-verify.');
+          process.exit(1);
+        }
+      }
       setStoredConfig(key, value);
     });
 

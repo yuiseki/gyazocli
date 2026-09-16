@@ -19,6 +19,10 @@ Adopt and document the existing top-level command structure.
 ### 2. Commands
 - `gyazo config set <key> <value>`
   - Currently supported key: `token`
+  - Options:
+    - `--no-verify` (save a token without checking it against the API first)
+  - A token is checked against `/api/users/me` before it is saved, and nothing
+    is written when Gyazo rejects it
 - `gyazo config get <key>`
   - `token` is masked
   - `me` fetches `/api/users/me`
