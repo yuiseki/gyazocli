@@ -193,6 +193,23 @@ export function truncateText(value: string, maxLength: number): string {
   return `${value.slice(0, maxLength - 3)}...`;
 }
 
+const JA_WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
+
+/**
+ * A timestamp as the person who took the capture experienced it: their own
+ * clock, in Japanese. The API sends UTC, so this converts rather than reading
+ * the digits out of the string.
+ */
+export function formatCreatedAtJa(value: string): string {
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return value;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${at.getFullYear()}年${at.getMonth() + 1}月${at.getDate()}日` +
+    `(${JA_WEEKDAYS[at.getDay()]}) ${pad(at.getHours())}:${pad(at.getMinutes())}`
+  );
+}
+
 export function formatCreatedAt(value: string): string {
   const match = value.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})/);
   if (match) {

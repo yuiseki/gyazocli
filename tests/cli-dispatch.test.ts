@@ -151,6 +151,14 @@ test('triage renders each capture as markdown, one heading per field it has', as
     expect(out).toMatch(/^## ocr$/m);
     expect(out).toContain('password: hunter2');
     expect(out).toMatch(/^## app$/m);
+    // The time is the one on the reader's own clock, in Japanese.
+    const at = new Date('2026-09-01T12:00:00+0000');
+    const weekday = ['日', '月', '火', '水', '木', '金', '土'][at.getDay()];
+    const expected =
+      `${at.getFullYear()}年${at.getMonth() + 1}月${at.getDate()}日(${weekday}) ` +
+      `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    expect(out).toContain(expected);
+    expect(out).not.toMatch(/^## captured_at$/m);
     expect(out).toContain('Google Chrome');
     expect(out).toMatch(/^## title$/m);
     // A field the capture does not carry gets no heading.

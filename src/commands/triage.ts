@@ -10,7 +10,7 @@
 import type { Command } from 'commander';
 import { searchImages } from '../api';
 import { ensureAccessToken } from '../credentials';
-import { normalizeText } from '../format';
+import { formatCreatedAtJa, normalizeText } from '../format';
 import { parsePositiveIntegerOption } from '../options';
 import { enrichImageLocations } from '../services/memory';
 
@@ -21,7 +21,6 @@ import { enrichImageLocations } from '../services/memory';
  */
 const FIELD_ORDER = [
   'created_at',
-  'captured_at',
   'app',
   'title',
   'desc',
@@ -58,8 +57,7 @@ function fieldsOf(image: any): Array<[string, string]> {
     : metadata.localizedObjectAnnotations;
 
   const candidates: Record<string, string | undefined> = {
-    created_at: text(image?.created_at),
-    captured_at: text(image?.exif_captured_at ?? exif?.time),
+    created_at: image?.created_at ? formatCreatedAtJa(image.created_at) : undefined,
     type: text(image?.type),
     permalink_url: text(image?.permalink_url),
     url: text(image?.url),
