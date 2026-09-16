@@ -100,8 +100,8 @@ export function registerTriageCommand(program: Command): void {
     .command('triage [query]')
     .description('Search, and print everything each capture carries as markdown')
     .option('-q, --query <query>', 'the search query')
-    .option('-p, --page <number>', 'page number', '1')
-    .option('-l, --limit <number>', 'captures per page', '20')
+    .option('-l, --limit <number>', 'how many captures to go through in this run', '20')
+    .option('--max-pages <number>', 'how many search pages to walk looking for them', '20')
     .option('--color <when>', 'colour the headings: auto, always or never', 'auto')
     .option('-i, --interactive', 'ask about each capture and record the answer')
     .option('--no-interactive', 'print without asking, even at a terminal')
@@ -117,29 +117,14 @@ export function registerTriageCommand(program: Command): void {
           process.exit(1);
         }
 
-        const page = parsePositiveIntegerOption(options.page, '--page');
         const limit = parsePositiveIntegerOption(options.limit, '--limit');
-        const found = await searchImages(query, page, limit);
+        const maxPages = parsePositiveIntegerOption(options.maxPages, '--max-pages');
 
         // Colour when a person is reading, not when the output is being piped
         // into a file. `--color always` is for a pager that understands it.
         const colour =
           options.color === 'always' ||
           (options.color !== 'never' && Boolean(process.stdout.isTTY) && !process.env.NO_COLOR);
-
-        console.log(`triage: ${query}`);
-        if (!found || found.length === 0) {
-          console.log('');
-          console.log('No captures matched.');
-          return;
-        }
-
-        // The search endpoint returns a lean image: no OCR, no coordinates.
-        // Triage is about what a capture says, so fetch the rest.
-        const images = await enrichImageLocations(found, {
-          useCache: options.cache !== false,
-          limit: found.length,
-        });
 
         // Asking only makes sense with someone there to answer. A pipe on
         // either side means this is feeding a file, not a person.
@@ -149,19 +134,59 @@ export function registerTriageCommand(program: Command): void {
             Boolean(process.stdin.isTTY) &&
             Boolean(process.stdout.isTTY));
 
-        const answered = loadTriageVerdicts();
-        const pending = interactive && !options.again
-          ? images.images.filter((image: any) => !answered.has(image.image_id))
-          : images.images;
+        console.log(`triage: ${query}`);
 
-        if (interactive && pending.length === 0) {
+        // Walk the search until `limit` captures that have not been answered
+        // are in hand. A page where everything is already answered is not the
+        // end of the road, which is what stopping at one page made it.
+        const answered = options.again ? new Map() : loadTriageVerdicts();
+        const selected: any[] = [];
+        let pagesWalked = 0;
+        let skipped = 0;
+        for (let page = 1; page <= maxPages && selected.length < limit; page++) {
+          const found = await searchImages(query, page, 100);
+          pagesWalked = page;
+          if (!found || found.length === 0) break;
+
+          for (const image of found) {
+            if (answered.has(image.image_id)) {
+              skipped++;
+              continue;
+            }
+            selected.push(image);
+            if (selected.length >= limit) break;
+          }
+
+          if (found.length < 100) break;
+        }
+
+        if (selected.length === 0) {
           console.log('');
-          console.log(`All ${images.images.length} already answered. Nothing left to ask about.`);
-          console.log(`Answers so far: ${getTriageLedgerPath()}`);
+          if (skipped > 0) {
+            console.log(
+              `Nothing left to ask about: ${skipped} already answered, ` +
+                `${pagesWalked} pages walked.`,
+            );
+            console.log(`Answers so far: ${getTriageLedgerPath()}`);
+          } else {
+            console.log('No captures matched.');
+          }
           return;
         }
 
-        console.log(`${pending.length} captures, page ${page}.`);
+        // The search endpoint returns a lean image: no OCR, no coordinates.
+        // Triage is about what a capture says, so fetch the rest.
+        const enriched = await enrichImageLocations(selected, {
+          useCache: options.cache !== false,
+          limit: selected.length,
+        });
+        const pending = enriched.images;
+
+        console.log(
+          `${pending.length} captures` +
+            (skipped > 0 ? `, ${skipped} already answered and skipped` : '') +
+            `, ${pagesWalked} pages walked.`,
+        );
 
         const print = (image: any, index: number) => {
           console.log('');

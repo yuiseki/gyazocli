@@ -57,13 +57,18 @@ Adopt and document the existing top-level command structure.
     `#`, one `##` heading per field it carries, captures separated by `---`
   - Options:
     - `-q, --query <query>` (the query, also accepted as a bare argument)
-    - `-p, --page <number>` (default: `1`)
-    - `-l, --limit <number>` (default: `20`)
+    - `-l, --limit <number>` (default: `20`; how many captures this run goes
+      through, not an API page size)
+    - `--max-pages <number>` (default: `20`; pages of 100 to walk looking for
+      captures not yet answered)
     - `--color <auto|always|never>` (default: `auto`, meaning a terminal)
     - `-i, --interactive` / `--no-interactive` (default: interactive when both
       stdin and stdout are a terminal)
     - `--again` (ask again about captures already answered)
     - `--no-cache`
+  - Captures already answered are skipped, and the walk continues to the next
+    page rather than stopping: a page where everything has been answered is not
+    the end of the results
   - Interactive mode asks `Is it safe? [Y/n]` per capture. Enter takes the
     default, `n` marks it unsafe, `q` or end of input stops and keeps what was
     answered. Answers are appended to

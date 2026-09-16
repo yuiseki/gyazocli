@@ -297,6 +297,98 @@ test('triage does not ask twice about the same capture', async () => {
   }
 });
 
+test('triage walks past captures already answered to find the next ones', async () => {
+  const cacheDir = createTempCacheDir();
+  // Two pages of 100. Everything on the first page is already answered.
+  const page1 = Array.from({ length: 100 }, (_, index) => ({
+    image_id: `c${String(index).padStart(31, '0')}`,
+    permalink_url: 'https://gyazo.com/x',
+    url: 'https://i.gyazo.com/x.png',
+    type: 'png',
+    created_at: '2026-09-01T12:00:00+0000',
+    metadata: { app: 'Chrome' },
+  }));
+  const page2 = ['d1', 'd2'].map((prefix) => ({
+    image_id: `${prefix}${'0'.repeat(30)}`,
+    permalink_url: `https://gyazo.com/${prefix}`,
+    url: `https://i.gyazo.com/${prefix}.png`,
+    type: 'png',
+    created_at: '2026-09-01T12:00:00+0000',
+    metadata: { app: 'Chrome' },
+  }));
+
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url.pathname === '/api/search') {
+      const page = Number(url.searchParams.get('page') || '1');
+      res.end(JSON.stringify(page === 1 ? page1 : page === 2 ? page2 : []));
+      return;
+    }
+    const id = url.pathname.split('/').pop();
+    res.end(JSON.stringify([...page1, ...page2].find((c) => c.image_id === id)));
+  });
+
+  try {
+    // Answer everything on the first page, in one run with a big budget.
+    const first = await runCli(cacheDir, ['triage', '-q', 'x', '-i', '--limit', '100'], {
+      apiOrigin: stub.origin,
+      input: 'y\n'.repeat(100),
+    });
+    expect(first.status).toBe(0);
+    expect(first.stdout).toContain('100 answered');
+
+    // The next run must reach page 2 rather than reporting nothing left.
+    const second = await runCli(cacheDir, ['triage', '-q', 'x', '-i'], {
+      apiOrigin: stub.origin,
+      input: 'y\ny\n',
+    });
+    expect(second.stdout).toContain(page2[0].image_id);
+    expect(second.stdout).toContain('2 answered');
+
+    const pages = stub.requests
+      .filter((request) => request.url.startsWith('/api/search'))
+      .map((request) => new URL(request.url, 'http://127.0.0.1').searchParams.get('page'));
+    expect(pages).toContain('2');
+  } finally {
+    await stub.close();
+  }
+});
+
+test('triage handles as many as --limit says, and no more', async () => {
+  const cacheDir = createTempCacheDir();
+  const captures = ['e1', 'e2', 'e3'].map((prefix) => ({
+    image_id: `${prefix}${'0'.repeat(30)}`,
+    permalink_url: `https://gyazo.com/${prefix}`,
+    url: `https://i.gyazo.com/${prefix}.png`,
+    type: 'png',
+    created_at: '2026-09-01T12:00:00+0000',
+    metadata: { app: 'Chrome' },
+  }));
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url.pathname === '/api/search') {
+      const page = Number(url.searchParams.get('page') || '1');
+      res.end(JSON.stringify(page === 1 ? captures : []));
+      return;
+    }
+    const id = url.pathname.split('/').pop();
+    res.end(JSON.stringify(captures.find((c) => c.image_id === id)));
+  });
+
+  try {
+    const result = await runCli(cacheDir, ['triage', '-q', 'x', '-i', '--limit', '2'], {
+      apiOrigin: stub.origin,
+      input: 'y\ny\ny\n',
+    });
+    expect(result.stdout).toContain('2 answered');
+    expect(result.stdout).not.toContain(captures[2].image_id);
+  } finally {
+    await stub.close();
+  }
+});
+
 test('triage says so when nothing matches', async () => {
   const cacheDir = createTempCacheDir();
   const stub = await startStubServer((_req, res) => {
