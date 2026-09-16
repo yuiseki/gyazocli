@@ -68,6 +68,28 @@ Three things worth knowing before composing a query:
 - **There is no coordinate or radius search.** Search by place with `address:`,
   which matches the address in any language and matches postal codes too.
 
+## Going through captures one at a time
+
+```bash
+gyazo triage -q "password"                 # markdown, one section per capture
+gyazo triage -q "API key" --limit 50
+gyazo triage --id <image_id>               # revisit one, answered or not
+gyazo triage -q "password" --no-interactive > review.md
+```
+
+`triage` prints everything a capture carries, one `##` heading per field it
+has, with the image ID as `#` and `---` between captures. At a terminal it
+asks `Is it safe? [Y/n]` after each one and records the answer in
+`${XDG_STATE_HOME:-~/.local/state}/gyazocli/triage.jsonl`; a capture already
+answered is skipped next time, and the walk pages on to find ones that are not.
+
+Answering `n` sets that capture to `only_me` when gyazo.com cookies are
+available, because the public API cannot change an access policy after upload.
+
+For an agent: pipe it (`--no-interactive`) and read the output. Do not answer
+the prompts on the user's behalf. Whether a capture is safe to leave public is
+theirs to decide, and `n` writes to their account.
+
 ## Summaries and rankings
 
 ```bash
