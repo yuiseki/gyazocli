@@ -145,19 +145,60 @@ test('triage renders each capture as markdown, one heading per field it has', as
     expect(result.status).toBe(0);
 
     const out = result.stdout;
-    // One section per capture, keyed by its id, and the query it came from.
-    expect(out).toMatch(/^# /m);
-    expect(out).toContain('password');
-    expect(out).toContain(id);
+    // The capture's id is the heading it lives under.
+    expect(out).toMatch(new RegExp(`^# ${id}$`, 'm'));
     // Keys as headings, values as content.
-    expect(out).toMatch(/^### ocr$/m);
+    expect(out).toMatch(/^## ocr$/m);
     expect(out).toContain('password: hunter2');
-    expect(out).toMatch(/^### app$/m);
+    expect(out).toMatch(/^## app$/m);
     expect(out).toContain('Google Chrome');
-    expect(out).toMatch(/^### title$/m);
+    expect(out).toMatch(/^## title$/m);
     // A field the capture does not carry gets no heading.
-    expect(out).not.toMatch(/^### desc$/m);
-    expect(out).not.toMatch(/^### alt_text$/m);
+    expect(out).not.toMatch(/^## desc$/m);
+    expect(out).not.toMatch(/^## alt_text$/m);
+    // Dropped on purpose: noise for reading through captures one at a time.
+    for (const field of ['type', 'permalink_url', 'url', 'ocr_locale', 'latitude', 'longitude']) {
+      expect(out, field).not.toMatch(new RegExp(`^## ${field}$`, 'm'));
+    }
+    // Piped output carries no escape sequences.
+    expect(out).not.toContain('\u001b[');
+  } finally {
+    await stub.close();
+  }
+});
+
+test('triage separates captures with a rule, and colours the id on request', async () => {
+  const cacheDir = createTempCacheDir();
+  const captures = ['88', '99'].map((prefix) => ({
+    image_id: `${prefix}${'0'.repeat(30)}`,
+    permalink_url: `https://gyazo.com/${prefix}${'0'.repeat(30)}`,
+    url: `https://i.gyazo.com/${prefix}${'0'.repeat(30)}.png`,
+    type: 'png',
+    created_at: '2026-09-01T12:00:00+0000',
+    metadata: { app: 'Google Chrome' },
+  }));
+
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url.pathname === '/api/search') {
+      res.end(JSON.stringify(captures));
+      return;
+    }
+    const id = url.pathname.split('/').pop();
+    res.end(JSON.stringify(captures.find((capture) => capture.image_id === id)));
+  });
+
+  try {
+    const plain = await runCli(cacheDir, ['triage', '-q', 'anything'], { apiOrigin: stub.origin });
+    expect(plain.status).toBe(0);
+    // Between the two captures, and not before the first or after the last.
+    expect(plain.stdout.match(/^---$/gm) ?? []).toHaveLength(1);
+
+    const coloured = await runCli(cacheDir, ['triage', '-q', 'anything', '--color', 'always'], {
+      apiOrigin: stub.origin,
+    });
+    expect(coloured.stdout).toContain(`\u001b[36m# ${captures[0].image_id}\u001b[0m`);
   } finally {
     await stub.close();
   }

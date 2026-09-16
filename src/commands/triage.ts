@@ -14,25 +14,26 @@ import { normalizeText } from '../format';
 import { parsePositiveIntegerOption } from '../options';
 import { enrichImageLocations } from '../services/memory';
 
-/** Fields worth a heading, in the order a person reads them. */
+/**
+ * Fields worth a heading, in the order a person reads them. The id, the URLs
+ * and the coordinates are deliberately absent: the id is the heading, and the
+ * rest is noise when the job is deciding something about a capture.
+ */
 const FIELD_ORDER = [
   'created_at',
   'captured_at',
-  'type',
-  'permalink_url',
-  'url',
   'app',
   'title',
   'desc',
   'page_url',
   'alt_text',
   'ocr',
-  'ocr_locale',
-  'latitude',
-  'longitude',
   'address',
   'objects',
 ];
+
+const CYAN = '\u001b[36m';
+const RESET = '\u001b[0m';
 
 function text(value: unknown): string | undefined {
   if (value === null || value === undefined) return undefined;
@@ -96,6 +97,7 @@ export function registerTriageCommand(program: Command): void {
     .option('-q, --query <query>', 'the search query')
     .option('-p, --page <number>', 'page number', '1')
     .option('-l, --limit <number>', 'captures per page', '20')
+    .option('--color <when>', 'colour the headings: auto, always or never', 'auto')
     .option('--no-cache', 'force fetch from API')
     .action(async (positional, options) => {
       await ensureAccessToken();
@@ -111,9 +113,15 @@ export function registerTriageCommand(program: Command): void {
         const limit = parsePositiveIntegerOption(options.limit, '--limit');
         const found = await searchImages(query, page, limit);
 
-        console.log(`# triage: ${query}`);
-        console.log('');
+        // Colour when a person is reading, not when the output is being piped
+        // into a file. `--color always` is for a pager that understands it.
+        const colour =
+          options.color === 'always' ||
+          (options.color !== 'never' && Boolean(process.stdout.isTTY) && !process.env.NO_COLOR);
+
+        console.log(`triage: ${query}`);
         if (!found || found.length === 0) {
+          console.log('');
           console.log('No captures matched.');
           return;
         }
@@ -128,10 +136,15 @@ export function registerTriageCommand(program: Command): void {
         console.log(`${images.images.length} captures, page ${page}.`);
         images.images.forEach((image: any, index: number) => {
           console.log('');
-          console.log(`## ${index + 1}. ${image.image_id}`);
+          if (index > 0) {
+            console.log('---');
+            console.log('');
+          }
+          const heading = `# ${image.image_id}`;
+          console.log(colour ? `${CYAN}${heading}${RESET}` : heading);
           for (const [key, value] of fieldsOf(image)) {
             console.log('');
-            console.log(`### ${key}`);
+            console.log(`## ${key}`);
             console.log('');
             console.log(value);
           }

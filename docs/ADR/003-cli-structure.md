@@ -53,12 +53,13 @@ Adopt and document the existing top-level command structure.
     - `-j, --json`
     - `--no-cache`
 - `gyazo triage [query]`
-  - Markdown for reading a search result capture by capture: one section per
-    capture, one heading per field it carries
+  - Markdown for reading a search result capture by capture: the image ID as
+    `#`, one `##` heading per field it carries, captures separated by `---`
   - Options:
     - `-q, --query <query>` (the query, also accepted as a bare argument)
     - `-p, --page <number>` (default: `1`)
     - `-l, --limit <number>` (default: `20`)
+    - `--color <auto|always|never>` (default: `auto`, meaning a terminal)
     - `--no-cache`
 - `gyazo apps`
   - Default range: from 8 days ago to yesterday
