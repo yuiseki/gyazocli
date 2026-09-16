@@ -389,6 +389,50 @@ test('triage handles as many as --limit says, and no more', async () => {
   }
 });
 
+test('triage shows the access policy when the capture has one', async () => {
+  const cacheDir = createTempCacheDir();
+  const captures = [
+    { suffix: 'f1', access_policy: 'only_me' },
+    { suffix: 'f2', access_policy: 'anyone' },
+    { suffix: 'f3', access_policy: null },
+  ].map(({ suffix, access_policy }) => ({
+    image_id: `${suffix}${'0'.repeat(30)}`,
+    permalink_url: `https://gyazo.com/${suffix}`,
+    url: `https://i.gyazo.com/${suffix}.png`,
+    type: 'png',
+    access_policy,
+    created_at: '2026-09-01T12:00:00+0000',
+    metadata: { app: 'Chrome' },
+  }));
+
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url.pathname === '/api/search') {
+      const page = Number(url.searchParams.get('page') || '1');
+      res.end(JSON.stringify(page === 1 ? captures : []));
+      return;
+    }
+    const id = url.pathname.split('/').pop();
+    res.end(JSON.stringify(captures.find((capture) => capture.image_id === id)));
+  });
+
+  try {
+    const result = await runCli(cacheDir, ['triage', '-q', 'x'], { apiOrigin: stub.origin });
+    expect(result.status).toBe(0);
+    const sections = result.stdout.split(/^---$/m);
+    expect(sections).toHaveLength(3);
+    // First field of the section, so it is read before a wall of OCR text.
+    expect(sections[0]).toMatch(/^## access_policy$\n\nonly_me$/m);
+    expect(sections[1]).toMatch(/^## access_policy$\n\nanyone$/m);
+    // Null is not a value: the API leaves this unset on most captures.
+    expect(sections[2]).not.toMatch(/^## access_policy$/m);
+    expect(sections[2]).not.toContain('null');
+  } finally {
+    await stub.close();
+  }
+});
+
 test('triage says so when nothing matches', async () => {
   const cacheDir = createTempCacheDir();
   const stub = await startStubServer((_req, res) => {

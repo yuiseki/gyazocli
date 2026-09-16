@@ -27,6 +27,9 @@ import {
  * rest is noise when the job is deciding something about a capture.
  */
 const FIELD_ORDER = [
+  // First, because it is what a triage decision often turns on. Absent on
+  // most captures: the API leaves it unset rather than saying `anyone`.
+  'access_policy',
   'created_at',
   'app',
   'title',
@@ -64,6 +67,7 @@ function fieldsOf(image: any): Array<[string, string]> {
     : metadata.localizedObjectAnnotations;
 
   const candidates: Record<string, string | undefined> = {
+    access_policy: text(image?.access_policy),
     created_at: image?.created_at ? formatCreatedAtJa(image.created_at) : undefined,
     type: text(image?.type),
     permalink_url: text(image?.permalink_url),
