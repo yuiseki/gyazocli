@@ -8,6 +8,7 @@ dist/
 .env
 .env.bak
 credentials.json
+.cookies/
 
 # Logs
 npm-debug.log*

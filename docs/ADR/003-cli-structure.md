@@ -79,9 +79,18 @@ Adopt and document the existing top-level command structure.
   - `--id <image_id...>` goes through exactly those captures, answered or not,
     which is how a mistaken answer is corrected. The ledger is append-only and
     the last answer for a capture wins
-  - Answering `n` prints the capture's page URL, and the run ends with the list
-    of them. Gyazo's API sets `access_policy` at upload and never after, so
-    making a capture `only_me` has to happen on its own page
+  - Answering `n` sets the capture to `only_me` when gyazo.com cookies are
+    available, and otherwise prints its page URL and says why. Gyazo's public
+    API takes `access_policy` at upload and has no endpoint that changes it
+    afterwards, so this speaks to the web app's own route the way the site
+    does: a session cookie plus the CSRF token from the capture's page. Without
+    the token the request answers 422 with an empty body
+  - Cookies are looked for at `GYAZO_COOKIE_FILE`, then
+    `~/.config/gyazo/cookie.json`, then `~/.config/gyazo/cookies.json`, then
+    `./.cookies/gyazo.com.json`. A path given outright is the only candidate.
+    A browser export, a `{name: value}` object and a header string are all
+    accepted, and entries for other domains are dropped
+  - `--no-apply` answers without changing anything
   - Interactive mode asks `Is it safe? [Y/n]` per capture. Enter takes the
     default, `n` marks it unsafe, `q` or end of input stops and keeps what was
     answered. Answers are appended to

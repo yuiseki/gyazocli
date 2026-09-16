@@ -9,9 +9,10 @@
  */
 import readline from 'node:readline';
 import type { Command } from 'commander';
-import { getImageDetail, searchImages } from '../api';
+import { getImageDetail, searchImages, setAccessPolicy } from '../api';
 import { ensureAccessToken } from '../credentials';
 import { formatCreatedAtJa, normalizeText } from '../format';
+import { loadCookieHeader } from '../cookies';
 import { normalizeImageId } from '../ids';
 import { parsePositiveIntegerOption } from '../options';
 import { enrichImageLocations } from '../services/memory';
@@ -151,6 +152,8 @@ export function registerTriageCommand(program: Command): void {
     .option('-i, --interactive', 'ask about each capture and record the answer')
     .option('--no-interactive', 'print without asking, even at a terminal')
     .option('--again', 'ask again about captures already answered')
+    .option('--cookies <path>', 'gyazo.com cookies, for making a capture private')
+    .option('--no-apply', 'answer without changing anything on Gyazo')
     .option('--no-cache', 'force fetch from API')
     .action(async (positional, options) => {
       await ensureAccessToken();
@@ -182,6 +185,8 @@ export function registerTriageCommand(program: Command): void {
           Boolean(process.stdout.isTTY));
 
       const terms = colour ? highlightTermsOf(query) : [];
+      // Read once, so a long triage does not touch the file per answer.
+      const cookieHeader = options.apply === false ? undefined : loadCookieHeader(options.cookies);
 
       const print = (image: any, index: number) => {
         console.log('');
@@ -222,6 +227,8 @@ export function registerTriageCommand(program: Command): void {
 
         const counts: Record<Verdict, number> = { safe: 0, unsafe: 0 };
         const toMakePrivate: string[] = [];
+        let madePrivate = 0;
+        let warnedAboutCookies = false;
         let asked = 0;
 
         try {
@@ -249,13 +256,39 @@ export function registerTriageCommand(program: Command): void {
             asked++;
 
             if (verdict === 'unsafe') {
-              // Gyazo's API can set an access policy at upload and never
-              // after, so making this one only_me means opening its page.
-              // Printed here, where the decision was made, and again at the
-              // end so a session leaves one list to work through.
               const link = image.permalink_url || `https://gyazo.com/${image.image_id}`;
-              toMakePrivate.push(link);
-              console.log(colour ? `${ORANGE}→ ${link}${PLAIN}` : `→ ${link}`);
+              const paint = (line: string) => (colour ? `${ORANGE}${line}${PLAIN}` : line);
+
+              if (options.apply === false) {
+                toMakePrivate.push(link);
+                console.log(paint(`→ ${link}`));
+              } else if (!cookieHeader) {
+                // The public API has no way to change this, so without
+                // cookies the honest move is to hand over the link and say
+                // why, once.
+                toMakePrivate.push(link);
+                console.log(paint(`→ ${link}`));
+                if (!warnedAboutCookies) {
+                  console.log(
+                    '  (no gyazo.com cookies found, so nothing was changed. Put them in ' +
+                      '~/.config/gyazo/cookie.json to have this set only_me for you.)',
+                  );
+                  warnedAboutCookies = true;
+                }
+              } else {
+                try {
+                  await setAccessPolicy(image.image_id, 'only_me', cookieHeader);
+                  console.log(paint(`→ only_me: ${link}`));
+                  madePrivate++;
+                } catch (error: any) {
+                  // A failure here is the interesting kind: the answer is
+                  // recorded, the capture is still public, and saying so is
+                  // the only way the difference is visible.
+                  toMakePrivate.push(link);
+                  console.log(paint(`→ ${link}`));
+                  console.log(`  could not set only_me: ${error.message}`);
+                }
+              }
             }
           }
         } finally {
@@ -263,7 +296,11 @@ export function registerTriageCommand(program: Command): void {
         }
 
         console.log('');
-        console.log(`${asked} answered: ${counts.safe} safe, ${counts.unsafe} unsafe.`);
+        console.log(
+          `${asked} answered: ${counts.safe} safe, ${counts.unsafe} unsafe` +
+            (madePrivate > 0 ? `, ${madePrivate} set only_me` : '') +
+            '.',
+        );
         if (skipped > 0) {
           console.log(`${skipped} skipped as already answered, ${pagesWalked} pages walked.`);
         }

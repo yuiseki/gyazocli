@@ -222,6 +222,49 @@ export async function fetchImageRendition(
   };
 }
 
+/**
+ * The web app's own endpoint for an existing capture.
+ *
+ * The public API takes `access_policy` when uploading and offers nothing that
+ * changes it afterwards, so this speaks to the same route the site does. It
+ * needs the session cookie and the CSRF token that goes with it: without the
+ * token the request comes back 422 with an empty body.
+ */
+export async function setAccessPolicy(
+  imageId: string,
+  accessPolicy: 'anyone' | 'only_me',
+  cookieHeader: string,
+): Promise<any> {
+  const page = await axios.get(`${webOrigin()}/${imageId}`, {
+    headers: { Cookie: cookieHeader },
+    responseType: 'text',
+    // A redirect to the login page means the cookies are stale; let it be
+    // seen rather than followed into an HTML page with no token.
+    maxRedirects: 0,
+    validateStatus: (status: number) => status >= 200 && status < 400,
+  } as any);
+  const token = String(page.data).match(/<meta name="csrf-token" content="([^"]+)"/)?.[1];
+  if (!token) {
+    throw new Error(
+      'could not read a CSRF token from gyazo.com; the cookies are probably expired',
+    );
+  }
+
+  const response = await axios.patch(
+    `${webOrigin()}/api/internal/images/${imageId}`,
+    { access_policy: accessPolicy },
+    {
+      headers: {
+        Cookie: cookieHeader,
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': token,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    },
+  );
+  return response.data;
+}
+
 export async function uploadImage(options: GyazoUploadOptions): Promise<GyazoImage> {
   const form = new FormData();
   form.append('access_token', config.GYAZO_ACCESS_TOKEN || '');

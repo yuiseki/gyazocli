@@ -109,6 +109,153 @@ test('list exits non-zero when the API returns an error', async () => {
   }
 });
 
+// --- making a capture private -----------------------------------------------
+
+/**
+ * The web app's own endpoint, which is the only thing that can change an
+ * access policy after upload: a page carrying a CSRF token, and a PATCH that
+ * wants it back.
+ */
+function internalApiStub(capture: any, options: { token?: string } = {}) {
+  const token = options.token ?? 'csrf-token-value';
+  const seen: Array<{ method: string; url: string; body: string; headers: any }> = [];
+  const handler: StubHandler = (req, res, body) => {
+    seen.push({
+      method: req.method || '',
+      url: req.url || '',
+      body: body.toString(),
+      headers: req.headers,
+    });
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    if (url.pathname === '/' || url.pathname === `/${capture.image_id}`) {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(`<html><head><meta name="csrf-token" content="${token}"></head></html>`);
+      return;
+    }
+    if (req.method === 'PATCH' && url.pathname.startsWith('/api/internal/images/')) {
+      if (req.headers['x-csrf-token'] !== token) {
+        res.writeHead(422, { 'Content-Type': 'text/html' });
+        res.end('');
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ image_id: capture.image_id, access_policy: 'only_me' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(url.pathname === '/api/search' ? [capture] : capture));
+  };
+  return { handler, seen };
+}
+
+const COOKIE_FILE_CONTENT = JSON.stringify([
+  { name: 'Gyazo_session', value: 'session-value', domain: '.gyazo.com' },
+  { name: '_ga', value: 'analytics', domain: '.gyazo.com' },
+  { name: 'elsewhere', value: 'no', domain: '.example.com' },
+]);
+
+function writeCookieFile(dir: string): string {
+  const file = path.join(dir, 'cookie.json');
+  fs.writeFileSync(file, COOKIE_FILE_CONTENT, 'utf8');
+  return file;
+}
+
+test('answering n makes the capture only_me through the web endpoint', async () => {
+  const cacheDir = createTempCacheDir();
+  const capture = {
+    image_id: `ac${'0'.repeat(30)}`,
+    permalink_url: `https://gyazo.com/ac${'0'.repeat(30)}`,
+    url: `https://i.gyazo.com/ac${'0'.repeat(30)}.png`,
+    type: 'png',
+    access_policy: 'anyone',
+    created_at: '2026-09-01T12:00:00+0000',
+    metadata: { app: 'Chrome' },
+  };
+  const { handler, seen } = internalApiStub(capture);
+  const stub = await startStubServer(handler);
+  const cookieFile = writeCookieFile(cacheDir);
+
+  try {
+    const result = await runCli(cacheDir, ['triage', '--id', capture.image_id, '-i'], {
+      apiOrigin: stub.origin,
+      webOrigin: stub.origin,
+      cookieFile,
+      input: 'n\n',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/only_me/);
+
+    const patch = seen.find((request) => request.method === 'PATCH');
+    expect(patch, 'it patches the internal endpoint').toBeDefined();
+    expect(patch!.url).toBe(`/api/internal/images/${capture.image_id}`);
+    expect(JSON.parse(patch!.body)).toEqual({ access_policy: 'only_me' });
+    // Session cookies for gyazo.com, and nothing from another domain.
+    expect(patch!.headers.cookie).toContain('Gyazo_session=session-value');
+    expect(patch!.headers.cookie).not.toContain('elsewhere');
+    // The token comes from a page fetched with the same cookies.
+    expect(patch!.headers['x-csrf-token']).toBe('csrf-token-value');
+  } finally {
+    await stub.close();
+  }
+});
+
+test('with no cookies it says what it cannot do, and still links the capture', async () => {
+  const cacheDir = createTempCacheDir();
+  const capture = {
+    image_id: `ad${'0'.repeat(30)}`,
+    permalink_url: `https://gyazo.com/ad${'0'.repeat(30)}`,
+    url: `https://i.gyazo.com/ad${'0'.repeat(30)}.png`,
+    type: 'png',
+    created_at: '2026-09-01T12:00:00+0000',
+    metadata: { app: 'Chrome' },
+  };
+  const { handler, seen } = internalApiStub(capture);
+  const stub = await startStubServer(handler);
+
+  try {
+    const result = await runCli(cacheDir, ['triage', '--id', capture.image_id, '-i'], {
+      apiOrigin: stub.origin,
+      webOrigin: stub.origin,
+      cookieFile: path.join(cacheDir, 'absent.json'),
+      input: 'n\n',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(capture.permalink_url);
+    expect(result.stdout).toMatch(/cookie/i);
+    expect(seen.some((request) => request.method === 'PATCH')).toBe(false);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('--no-apply answers without touching the account', async () => {
+  const cacheDir = createTempCacheDir();
+  const capture = {
+    image_id: `ae${'0'.repeat(30)}`,
+    permalink_url: `https://gyazo.com/ae${'0'.repeat(30)}`,
+    url: `https://i.gyazo.com/ae${'0'.repeat(30)}.png`,
+    type: 'png',
+    created_at: '2026-09-01T12:00:00+0000',
+    metadata: { app: 'Chrome' },
+  };
+  const { handler, seen } = internalApiStub(capture);
+  const stub = await startStubServer(handler);
+  const cookieFile = writeCookieFile(cacheDir);
+
+  try {
+    const result = await runCli(
+      cacheDir,
+      ['triage', '--id', capture.image_id, '-i', '--no-apply'],
+      { apiOrigin: stub.origin, webOrigin: stub.origin, cookieFile, input: 'n\n' },
+    );
+    expect(result.status).toBe(0);
+    expect(seen.some((request) => request.method === 'PATCH')).toBe(false);
+    expect(result.stdout).toContain(capture.permalink_url);
+  } finally {
+    await stub.close();
+  }
+});
+
 // --- triage -----------------------------------------------------------------
 
 test('triage renders each capture as markdown, one heading per field it has', async () => {
