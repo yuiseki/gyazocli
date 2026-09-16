@@ -434,6 +434,57 @@ test('triage shows the access policy when the capture has one', async () => {
   }
 });
 
+test('triage highlights what the query matched', async () => {
+  const cacheDir = createTempCacheDir();
+  const capture = {
+    image_id: `g1${'0'.repeat(30)}`,
+    permalink_url: 'https://gyazo.com/g1',
+    url: 'https://i.gyazo.com/g1.png',
+    type: 'png',
+    access_policy: 'anyone',
+    created_at: '2026-09-01T12:00:00+0000',
+    metadata: {
+      app: 'Chrome',
+      ocr: { description: 'the Password field, and a password again' },
+      exif_address: { ja: { address: '日本、広島県広島市中区' } },
+      exif_normalized: { latitude: 34.3, longitude: 132.4 },
+    },
+  };
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(url.pathname === '/api/search' ? [capture] : capture));
+  });
+
+  const ORANGE = '\u001b[38;5;208m';
+  const PLAIN = '\u001b[39m';
+
+  try {
+    const plain = await runCli(cacheDir, ['triage', '-q', 'password'], { apiOrigin: stub.origin });
+    expect(plain.stdout).not.toContain(ORANGE);
+    expect(plain.stdout).toContain('the Password field, and a password again');
+
+    const lit = await runCli(cacheDir, ['triage', '-q', 'password', '--color', 'always'], {
+      apiOrigin: stub.origin,
+    });
+    // Both occurrences, and the case of the text is kept.
+    expect(lit.stdout).toContain(`the ${ORANGE}Password${PLAIN} field`);
+    expect(lit.stdout).toContain(`a ${ORANGE}password${PLAIN} again`);
+
+    // The value of an operator counts, and its key does not: `has:exif` must
+    // not paint every "exif" in sight.
+    const operators = await runCli(
+      cacheDir,
+      ['triage', '-q', 'address:広島 has:exif', '--color', 'always', '--again'],
+      { apiOrigin: stub.origin },
+    );
+    expect(operators.stdout).toContain(`${ORANGE}広島${PLAIN}`);
+    expect(operators.stdout).not.toContain(`${ORANGE}exif${PLAIN}`);
+  } finally {
+    await stub.close();
+  }
+});
+
 test('triage says so when nothing matches', async () => {
   const cacheDir = createTempCacheDir();
   const stub = await startStubServer((_req, res) => {

@@ -66,6 +66,10 @@ Adopt and document the existing top-level command structure.
       stdin and stdout are a terminal)
     - `--again` (ask again about captures already answered)
     - `--no-cache`
+  - What the query matched is painted orange, case kept. Bare words and the
+    values of text operators count; `has:`, `type:`, `date:`, `since:` and
+    `until:` values, negated terms and `OR` do not. Only when colour is on,
+    so piped output stays plain
   - `access_policy` is printed first, and an unset one is printed as `anyone`:
     the API leaves it unset on most captures, and a reader looking for
     `only_me` is better served by every section saying which it is

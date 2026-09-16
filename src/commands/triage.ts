@@ -42,6 +42,42 @@ const FIELD_ORDER = [
 
 const CYAN = '\u001b[36m';
 const RESET = '\u001b[0m';
+const ORANGE = '\u001b[38;5;208m';
+/** Back to the default foreground, rather than resetting every attribute. */
+const PLAIN = '\u001b[39m';
+
+/** Operators whose value never appears in the text, so painting it is noise. */
+const STRUCTURAL_KEYS = new Set(['has', 'type', 'date', 'since', 'until']);
+
+/**
+ * The parts of a query that can show up in what a capture says: bare words,
+ * and the values of the operators that match text. `has:exif` contributes
+ * nothing, and a negated term should not be there to find.
+ */
+export function highlightTermsOf(query: string): string[] {
+  const terms: string[] = [];
+  // Quoted values hold spaces: app:"Gyazo Android".
+  for (const token of query.match(/(?:[^\s"]|"[^"]*")+/g) || []) {
+    if (token.startsWith('-') || token === 'OR' || token === 'or') continue;
+    const separator = token.indexOf(':');
+    const raw = separator === -1 ? token : token.slice(separator + 1);
+    if (separator !== -1 && STRUCTURAL_KEYS.has(token.slice(0, separator).toLowerCase())) continue;
+    const value = raw.replace(/^"|"$/g, '').trim();
+    if (value) terms.push(value);
+  }
+  return terms;
+}
+
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Paint every occurrence of a term, keeping the text's own case. */
+function highlight(value: string, terms: string[]): string {
+  if (terms.length === 0) return value;
+  const pattern = new RegExp(terms.map(escapeForRegExp).join('|'), 'gi');
+  return value.replace(pattern, (match) => `${ORANGE}${match}${PLAIN}`);
+}
 
 function text(value: unknown): string | undefined {
   if (value === null || value === undefined) return undefined;
@@ -194,6 +230,7 @@ export function registerTriageCommand(program: Command): void {
             `, ${pagesWalked} pages walked.`,
         );
 
+        const terms = colour ? highlightTermsOf(query) : [];
         const print = (image: any, index: number) => {
           console.log('');
           if (index > 0) {
@@ -206,7 +243,7 @@ export function registerTriageCommand(program: Command): void {
             console.log('');
             console.log(`## ${key}`);
             console.log('');
-            console.log(value);
+            console.log(highlight(value, terms));
           }
         };
 
