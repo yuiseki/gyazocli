@@ -210,12 +210,25 @@ export function formatCreatedAtJa(value: string): string {
   );
 }
 
+/**
+ * A timestamp on the reader's own clock.
+ *
+ * This used to lift the digits out of the string, which showed the API's UTC
+ * as if it were local time: a capture taken at 18:09 in Tokyo was listed as
+ * 09:09. The filters were always local, so only the display was wrong, and it
+ * was wrong by a whole timezone.
+ */
 export function formatCreatedAt(value: string): string {
-  const match = value.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})/);
-  if (match) {
-    return `${match[1]} ${match[2]}:${match[3]}`;
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) {
+    const match = value.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})/);
+    return match ? `${match[1]} ${match[2]}:${match[3]}` : value;
   }
-  return value;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ` +
+    `${pad(at.getHours())}:${pad(at.getMinutes())}`
+  );
 }
 
 export function shortenImageId(imageId: string): string {

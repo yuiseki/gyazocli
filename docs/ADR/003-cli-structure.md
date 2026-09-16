@@ -139,6 +139,10 @@ Adopt and document the existing top-level command structure.
   - Supported types: `json`, `hourly`
 
 ### 3. Output and Behavior Notes
+- Timestamps are printed on the reader's own clock. The API sends UTC, and
+  until 2026-09-16 the display lifted the digits out of the string, so a
+  capture taken at 18:09 in Tokyo was listed as 09:09. The `--date`, `--hour`
+  and `--today` filters were always local; only the display was wrong.
 - `-j, --json` is available on `config get`, `list`, `get`, `search`, `apps`, `domains`, `tags`, `locations`, and `summary`.
 - `summary` default output is Markdown with headings (`## Gyazo Summary`, `### YYYY-MM-DD`) and nested bullet lists.
 - There are no global `--plain` or `--verbose` flags in current implementation.

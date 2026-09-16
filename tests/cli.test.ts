@@ -425,7 +425,7 @@ test('get prints markdown fields, objects and truncated OCR preview', () => {
   writeImageCache(cacheDir, imageId, {
     image_id: imageId,
     permalink_url: `https://gyazo.com/${imageId}`,
-    created_at: '2026-02-20T02:34:56+09:00',
+    created_at: localIsoFromDate(new Date(2026, 1, 20, 2, 34, 56)),
     alt_text: '  ALT text sample  ',
     metadata: {
       title: '  Sample Title  ',
@@ -449,6 +449,7 @@ test('get prints markdown fields, objects and truncated OCR preview', () => {
   expect(result.status).toBe(0);
   expect(result.stdout).toContain('## Gyazo Image');
   expect(result.stdout).toContain(`- URL: <https://gyazo.com/${imageId}>`);
+  // Shown on this machine's clock, which is the instant the fixture carries.
   expect(result.stdout).toContain('- Created at: 2026-02-20 02:34');
   expect(result.stdout).toContain('- Title: Sample Title');
   expect(result.stdout).toContain('- Address: 東京都台東区竜泉');
@@ -544,7 +545,7 @@ test('list --hour formats summary with domain, location and short id', () => {
   writeImageCache(cacheDir, imageId, {
     image_id: imageId,
     permalink_url: `https://gyazo.com/${imageId}`,
-    created_at: '2026-02-20T02:34:56+09:00',
+    created_at: localIsoFromDate(new Date(2026, 1, 20, 2, 34, 56)),
     alt_text: '',
     metadata: {
       url: 'https://x.com/example/status/1',
