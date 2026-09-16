@@ -9,9 +9,10 @@
  */
 import readline from 'node:readline';
 import type { Command } from 'commander';
-import { searchImages } from '../api';
+import { getImageDetail, searchImages } from '../api';
 import { ensureAccessToken } from '../credentials';
 import { formatCreatedAtJa, normalizeText } from '../format';
+import { normalizeImageId } from '../ids';
 import { parsePositiveIntegerOption } from '../options';
 import { enrichImageLocations } from '../services/memory';
 import {
@@ -137,13 +138,15 @@ function fieldsOf(image: any): Array<[string, string]> {
   );
 }
 
+
 export function registerTriageCommand(program: Command): void {
   program
     .command('triage [query]')
-    .description('Search, and print everything each capture carries as markdown')
+    .description('Search, and go through the captures one at a time')
     .option('-q, --query <query>', 'the search query')
     .option('-l, --limit <number>', 'how many captures to go through in this run', '20')
     .option('--max-pages <number>', 'how many search pages to walk looking for them', '20')
+    .option('--id <image_id...>', 'go through exactly these captures, answered or not')
     .option('--color <when>', 'colour the headings: auto, always or never', 'auto')
     .option('-i, --interactive', 'ask about each capture and record the answer')
     .option('--no-interactive', 'print without asking, even at a terminal')
@@ -151,32 +154,145 @@ export function registerTriageCommand(program: Command): void {
     .option('--no-cache', 'force fetch from API')
     .action(async (positional, options) => {
       await ensureAccessToken();
-      try {
-        const query = normalizeText(options.query || positional);
-        if (!query) {
-          console.error('Error: Query is required.');
-          console.error('Hint: gyazo triage -q "password"');
-          process.exit(1);
+
+      const ids: string[] = options.id || [];
+      const query = normalizeText(options.query || positional) || '';
+      if (!query && ids.length === 0) {
+        console.error('Error: Query is required.');
+        console.error('Hint: gyazo triage -q "password"');
+        console.error('      gyazo triage --id <image_id>   to revisit one');
+        process.exit(1);
+      }
+
+      const limit = parsePositiveIntegerOption(options.limit, '--limit');
+      const maxPages = parsePositiveIntegerOption(options.maxPages, '--max-pages');
+
+      // Colour when a person is reading, not when the output is being piped
+      // into a file. `--color always` is for a pager that understands it.
+      const colour =
+        options.color === 'always' ||
+        (options.color !== 'never' && Boolean(process.stdout.isTTY) && !process.env.NO_COLOR);
+
+      // Asking only makes sense with someone there to answer. A pipe on either
+      // side means this is feeding a file, not a person.
+      const interactive =
+        options.interactive === true ||
+        (options.interactive !== false &&
+          Boolean(process.stdin.isTTY) &&
+          Boolean(process.stdout.isTTY));
+
+      const terms = colour ? highlightTermsOf(query) : [];
+
+      const print = (image: any, index: number) => {
+        console.log('');
+        if (index > 0) {
+          console.log('---');
+          console.log('');
+        }
+        const heading = `# ${image.image_id}`;
+        console.log(colour ? `${CYAN}${heading}${RESET}` : heading);
+        for (const [key, value] of fieldsOf(image)) {
+          console.log('');
+          console.log(`## ${key}`);
+          console.log('');
+          console.log(highlight(value, terms));
+        }
+      };
+
+      const goThrough = async (
+        captures: any[],
+        skipped: number,
+        pagesWalked: number,
+      ): Promise<void> => {
+        if (!interactive) {
+          captures.forEach(print);
+          return;
         }
 
-        const limit = parsePositiveIntegerOption(options.limit, '--limit');
-        const maxPages = parsePositiveIntegerOption(options.maxPages, '--max-pages');
+        // Lines are pulled from an iterator rather than asked for with
+        // rl.question: with piped input, question() resolves once and then
+        // never again, so everything after the first answer is lost.
+        const lines = readline.createInterface({ input: process.stdin });
+        const answers = lines[Symbol.asyncIterator]();
+        const ask = async (prompt: string): Promise<string | null> => {
+          process.stdout.write(prompt);
+          const { value, done } = await answers.next();
+          return done ? null : String(value);
+        };
 
-        // Colour when a person is reading, not when the output is being piped
-        // into a file. `--color always` is for a pager that understands it.
-        const colour =
-          options.color === 'always' ||
-          (options.color !== 'never' && Boolean(process.stdout.isTTY) && !process.env.NO_COLOR);
+        const counts: Record<Verdict, number> = { safe: 0, unsafe: 0 };
+        const toMakePrivate: string[] = [];
+        let asked = 0;
 
-        // Asking only makes sense with someone there to answer. A pipe on
-        // either side means this is feeding a file, not a person.
-        const interactive =
-          options.interactive === true ||
-          (options.interactive !== false &&
-            Boolean(process.stdin.isTTY) &&
-            Boolean(process.stdout.isTTY));
+        try {
+          for (const [index, image] of captures.entries()) {
+            print(image, index);
+            console.log('');
+            const raw = await ask('Is it safe? [Y/n] ');
+            // Enter takes the default. q stops, and so does end of input: no
+            // answer is not the same as "safe".
+            if (raw === null) {
+              console.log('');
+              break;
+            }
+            const answer = raw.trim().toLowerCase();
+            if (answer === 'q' || answer === 'quit') break;
 
-        console.log(`triage: ${query}`);
+            const verdict: Verdict = answer === 'n' || answer === 'no' ? 'unsafe' : 'safe';
+            appendTriageEntry({
+              image_id: image.image_id,
+              verdict,
+              at: new Date().toISOString(),
+              query: query || undefined,
+            });
+            counts[verdict]++;
+            asked++;
+
+            if (verdict === 'unsafe') {
+              // Gyazo's API can set an access policy at upload and never
+              // after, so making this one only_me means opening its page.
+              // Printed here, where the decision was made, and again at the
+              // end so a session leaves one list to work through.
+              const link = image.permalink_url || `https://gyazo.com/${image.image_id}`;
+              toMakePrivate.push(link);
+              console.log(colour ? `${ORANGE}→ ${link}${PLAIN}` : `→ ${link}`);
+            }
+          }
+        } finally {
+          lines.close();
+        }
+
+        console.log('');
+        console.log(`${asked} answered: ${counts.safe} safe, ${counts.unsafe} unsafe.`);
+        if (skipped > 0) {
+          console.log(`${skipped} skipped as already answered, ${pagesWalked} pages walked.`);
+        }
+        if (toMakePrivate.length > 0) {
+          console.log('');
+          console.log(`${toMakePrivate.length} to make private (only_me), on their own pages:`);
+          for (const link of toMakePrivate) console.log(`  ${link}`);
+        }
+        console.log(`Written to ${getTriageLedgerPath()}`);
+      };
+
+      try {
+        console.log(`triage: ${query || ids.join(', ')}`);
+
+        // Named captures are fetched as named, and asked about whether or not
+        // they were answered before: naming one is how a mistake is corrected.
+        if (ids.length > 0) {
+          const named: any[] = [];
+          for (const given of ids) {
+            const imageId = normalizeImageId(given);
+            if (!imageId) {
+              console.error(`Error: '${given}' is not a Gyazo image ID or URL.`);
+              process.exit(1);
+            }
+            named.push(await getImageDetail(imageId));
+          }
+          await goThrough(named, 0, 0);
+          return;
+        }
 
         // Walk the search until `limit` captures that have not been answered
         // are in hand. A page where everything is already answered is not the
@@ -222,80 +338,13 @@ export function registerTriageCommand(program: Command): void {
           useCache: options.cache !== false,
           limit: selected.length,
         });
-        const pending = enriched.images;
 
         console.log(
-          `${pending.length} captures` +
+          `${enriched.images.length} captures` +
             (skipped > 0 ? `, ${skipped} already answered and skipped` : '') +
             `, ${pagesWalked} pages walked.`,
         );
-
-        const terms = colour ? highlightTermsOf(query) : [];
-        const print = (image: any, index: number) => {
-          console.log('');
-          if (index > 0) {
-            console.log('---');
-            console.log('');
-          }
-          const heading = `# ${image.image_id}`;
-          console.log(colour ? `${CYAN}${heading}${RESET}` : heading);
-          for (const [key, value] of fieldsOf(image)) {
-            console.log('');
-            console.log(`## ${key}`);
-            console.log('');
-            console.log(highlight(value, terms));
-          }
-        };
-
-        if (!interactive) {
-          pending.forEach(print);
-          return;
-        }
-
-        // Lines are pulled from an iterator rather than asked for with
-        // rl.question: with piped input, question() resolves once and then
-        // never again, so everything after the first answer is lost. This
-        // shape works the same at a terminal and under `printf ... |`.
-        const lines = readline.createInterface({ input: process.stdin });
-        const answers = lines[Symbol.asyncIterator]();
-        const ask = async (prompt: string): Promise<string | null> => {
-          process.stdout.write(prompt);
-          const { value, done } = await answers.next();
-          return done ? null : String(value);
-        };
-
-        const counts: Record<Verdict, number> = { safe: 0, unsafe: 0 };
-        let asked = 0;
-        try {
-          for (const [index, image] of pending.entries()) {
-            print(image, index);
-            console.log('');
-            const raw = await ask('Is it safe? [Y/n] ');
-            // Enter takes the default. q stops, and so does end of input:
-            // no answer is not the same as "safe".
-            if (raw === null) {
-              console.log('');
-              break;
-            }
-            const answer = raw.trim().toLowerCase();
-            if (answer === 'q' || answer === 'quit') break;
-            const verdict: Verdict = answer === 'n' || answer === 'no' ? 'unsafe' : 'safe';
-            appendTriageEntry({
-              image_id: image.image_id,
-              verdict,
-              at: new Date().toISOString(),
-              query,
-            });
-            counts[verdict]++;
-            asked++;
-          }
-        } finally {
-          lines.close();
-        }
-
-        console.log('');
-        console.log(`${asked} answered: ${counts.safe} safe, ${counts.unsafe} unsafe.`);
-        console.log(`Written to ${getTriageLedgerPath()}`);
+        await goThrough(enriched.images, skipped, pagesWalked);
       } catch (error: any) {
         console.error('Error triaging images:', error.message);
         process.exit(1);

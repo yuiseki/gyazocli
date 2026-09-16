@@ -76,6 +76,12 @@ Adopt and document the existing top-level command structure.
   - Captures already answered are skipped, and the walk continues to the next
     page rather than stopping: a page where everything has been answered is not
     the end of the results
+  - `--id <image_id...>` goes through exactly those captures, answered or not,
+    which is how a mistaken answer is corrected. The ledger is append-only and
+    the last answer for a capture wins
+  - Answering `n` prints the capture's page URL, and the run ends with the list
+    of them. Gyazo's API sets `access_policy` at upload and never after, so
+    making a capture `only_me` has to happen on its own page
   - Interactive mode asks `Is it safe? [Y/n]` per capture. Enter takes the
     default, `n` marks it unsafe, `q` or end of input stops and keeps what was
     answered. Answers are appended to

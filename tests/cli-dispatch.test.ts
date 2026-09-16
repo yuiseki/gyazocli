@@ -485,6 +485,91 @@ test('triage highlights what the query matched', async () => {
   }
 });
 
+test('answering n prints the capture URL, and the run ends with the list of them', async () => {
+  const cacheDir = createTempCacheDir();
+  const captures = ['h1', 'h2'].map((prefix) => ({
+    image_id: `${prefix}${'0'.repeat(30)}`,
+    permalink_url: `https://gyazo.com/${prefix}${'0'.repeat(30)}`,
+    url: `https://i.gyazo.com/${prefix}${'0'.repeat(30)}.png`,
+    type: 'png',
+    created_at: '2026-09-01T12:00:00+0000',
+    metadata: { app: 'Chrome' },
+  }));
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url.pathname === '/api/search') {
+      const page = Number(url.searchParams.get('page') || '1');
+      res.end(JSON.stringify(page === 1 ? captures : []));
+      return;
+    }
+    const id = url.pathname.split('/').pop();
+    res.end(JSON.stringify(captures.find((capture) => capture.image_id === id)));
+  });
+
+  try {
+    const result = await runCli(cacheDir, ['triage', '-q', 'x', '-i'], {
+      apiOrigin: stub.origin,
+      input: 'n\ny\n',
+    });
+    expect(result.status).toBe(0);
+    // The one answered n is linked where it was answered, and again at the end,
+    // because making it private is something only the web UI can do.
+    expect(result.stdout).toContain(captures[0].permalink_url);
+    expect(result.stdout).not.toContain(captures[1].permalink_url);
+    expect(result.stdout).toMatch(/1 to make private|only_me/i);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('triage --id asks about exactly those captures, answered or not', async () => {
+  const cacheDir = createTempCacheDir();
+  const capture = {
+    // 32 hex characters: --id runs the same check the rest of the CLI does.
+    image_id: `ab${'0'.repeat(30)}`,
+    permalink_url: `https://gyazo.com/ab${'0'.repeat(30)}`,
+    url: `https://i.gyazo.com/ab${'0'.repeat(30)}.png`,
+    type: 'png',
+    created_at: '2026-09-01T12:00:00+0000',
+    metadata: { app: 'Chrome' },
+  };
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(capture));
+  });
+
+  try {
+    const first = await runCli(cacheDir, ['triage', '--id', capture.image_id, '-i'], {
+      apiOrigin: stub.origin,
+      input: 'y\n',
+    });
+    expect(first.status).toBe(0);
+    expect(first.stdout).toContain(capture.image_id);
+    // No search at all: the ids say what to look at.
+    expect(stub.requests.some((request) => request.url.startsWith('/api/search'))).toBe(false);
+
+    // Answering again is the point of naming an id: it is how a mistake is
+    // corrected.
+    const second = await runCli(cacheDir, ['triage', '--id', capture.image_id, '-i'], {
+      apiOrigin: stub.origin,
+      input: 'n\n',
+    });
+    expect(second.stdout).toMatch(/Is it safe/);
+
+    const ledger = path.join(cacheDir, '.local', 'state', 'gyazocli', 'triage.jsonl');
+    const verdicts = fs
+      .readFileSync(ledger, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line).verdict);
+    expect(verdicts).toEqual(['safe', 'unsafe']);
+  } finally {
+    await stub.close();
+  }
+});
+
 test('triage says so when nothing matches', async () => {
   const cacheDir = createTempCacheDir();
   const stub = await startStubServer((_req, res) => {
