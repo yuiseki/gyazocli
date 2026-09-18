@@ -750,6 +750,24 @@ test('triage takes the query as a bare argument too', async () => {
   }
 });
 
+test('a request that never responds fails instead of hanging forever', async () => {
+  const cacheDir = createTempCacheDir();
+  // A server that accepts the connection and then says nothing.
+  const stub = await startStubServer(() => {
+    /* never write, never end */
+  });
+  try {
+    const result = await runCli(cacheDir, ['ls', '--limit', '1'], {
+      apiOrigin: stub.origin,
+      env: { GYAZO_HTTP_TIMEOUT_MS: '800' },
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/timeout|timed out/i);
+  } finally {
+    await stub.close();
+  }
+}, 15000);
+
 // --- an access token that is no longer accepted ----------------------------
 
 /** Every authenticated endpoint answering the way a revoked token gets answered. */

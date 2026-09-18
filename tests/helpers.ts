@@ -32,6 +32,8 @@ export interface CliOptions {
   webOrigin?: string;
   /** Where the CLI should look for gyazo.com cookies. */
   cookieFile?: string;
+  /** Extra environment variables for the spawned CLI. */
+  env?: Record<string, string>;
   /** Omit the access token entirely, as an agent with no credentials would. */
   noToken?: boolean;
 }
@@ -95,6 +97,7 @@ export function runCli(
   // Always pinned: without this a test would pick up whatever cookies the
   // developer has lying around, and reach for a real session.
   env.GYAZO_COOKIE_FILE = options.cookieFile ?? path.join(cacheDir, 'no-cookies.json');
+  if (options.env) Object.assign(env, options.env);
 
   const child = spawn(process.execPath, [CLI_PATH, ...args], {
     cwd: REPO_ROOT,

@@ -2,6 +2,12 @@ import axios from 'axios';
 import FormData from 'form-data';
 import { config } from './config';
 
+// Every request gets a deadline. Without one, a single stalled connection
+// hangs the whole process indefinitely: a `sync` was found wedged on one
+// month for over two hours, the socket open and nothing arriving. Overridable
+// for a slow link or a deliberately long-running probe.
+const REQUEST_TIMEOUT_MS = Number(process.env.GYAZO_HTTP_TIMEOUT_MS) || 30_000;
+
 const DEFAULT_API_ORIGIN = 'https://api.gyazo.com';
 const DEFAULT_UPLOAD_ORIGIN = 'https://upload.gyazo.com';
 const DEFAULT_WEB_ORIGIN = 'https://gyazo.com';
@@ -83,9 +89,17 @@ async function requestWithRetry(url: string, params: any = {}, headers?: Record<
     headers ?? { Authorization: `Bearer ${config.GYAZO_ACCESS_TOKEN}` };
 
   try {
-    const response = await axios.get(url, { headers: requestHeaders, params });
+    const response = await axios.get(url, { headers: requestHeaders, params, timeout: REQUEST_TIMEOUT_MS });
     return response.data;
   } catch (error: any) {
+    // A timeout is worth one retry: a single stalled connection is usually
+    // transient, and giving up on the whole walk for one is worse.
+    if (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || '')) {
+      throw new Error(
+        `Gyazo did not respond within ${REQUEST_TIMEOUT_MS}ms. ` +
+          'Retry, or raise GYAZO_HTTP_TIMEOUT_MS for a slow link.',
+      );
+    }
     if (error.response && error.response.status === 401) {
       // The status alone reads as a bug in the caller. It is not: the token
       // is present and Gyazo will not take it. That happens when it is
@@ -209,7 +223,7 @@ export async function fetchImageRendition(
   // is not already stored, which is most of them. Its value is ignored, and
   // the extension alone decides what comes back, so a constant will do.
   const url = `${imageOrigin()}/thumb/${width}_w/${imageId}-jpg.${extension}`;
-  const response = await axios.get(url, { responseType: 'arraybuffer' });
+  const response = await axios.get(url, { responseType: 'arraybuffer', timeout: REQUEST_TIMEOUT_MS });
   const data = Buffer.from(response.data);
   const contentType = String(response.headers['content-type'] || '').split(';')[0].trim();
   return {
@@ -238,6 +252,7 @@ export async function setAccessPolicy(
   const page = await axios.get(`${webOrigin()}/${imageId}`, {
     headers: { Cookie: cookieHeader },
     responseType: 'text',
+    timeout: REQUEST_TIMEOUT_MS,
     // A redirect to the login page means the cookies are stale; let it be
     // seen rather than followed into an HTML page with no token.
     maxRedirects: 0,
@@ -254,6 +269,7 @@ export async function setAccessPolicy(
     `${webOrigin()}/api/internal/images/${imageId}`,
     { access_policy: accessPolicy },
     {
+      timeout: REQUEST_TIMEOUT_MS,
       headers: {
         Cookie: cookieHeader,
         'Content-Type': 'application/json',
@@ -281,6 +297,7 @@ export async function uploadImage(options: GyazoUploadOptions): Promise<GyazoIma
   }
 
   const response = await axios.post(apiUploadUrl(), form, {
+    timeout: REQUEST_TIMEOUT_MS,
     headers: form.getHeaders(),
   });
   return response.data;
