@@ -8,6 +8,16 @@ import { config } from './config';
 // for a slow link or a deliberately long-running probe.
 const REQUEST_TIMEOUT_MS = Number(process.env.GYAZO_HTTP_TIMEOUT_MS) || 30_000;
 
+// Rate-limit backoff. On 429 the wait grows exponentially rather than sitting
+// at a fixed few seconds: a short fixed retry can keep hitting the limit and
+// never let the window clear. Retry-After, when the server sends it, is a
+// floor. Bounded, so a persistent 429 gives up instead of looping forever.
+const RETRY_BASE_MS = Number(process.env.GYAZO_RETRY_BASE_MS) || 2_000;
+const RETRY_MAX_MS = Number(process.env.GYAZO_RETRY_MAX_MS) || 60_000;
+const MAX_RETRIES = Number(process.env.GYAZO_MAX_RETRIES) || 6;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const DEFAULT_API_ORIGIN = 'https://api.gyazo.com';
 const DEFAULT_UPLOAD_ORIGIN = 'https://upload.gyazo.com';
 const DEFAULT_WEB_ORIGIN = 'https://gyazo.com';
@@ -89,36 +99,54 @@ async function requestWithRetry(url: string, params: any = {}, headers?: Record<
   const requestHeaders =
     headers ?? { Authorization: `Bearer ${config.GYAZO_ACCESS_TOKEN}` };
 
-  try {
-    const response = await axios.get(url, { headers: requestHeaders, params, timeout: REQUEST_TIMEOUT_MS });
-    return response.data;
-  } catch (error: any) {
-    // A timeout is worth one retry: a single stalled connection is usually
-    // transient, and giving up on the whole walk for one is worse.
-    if (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || '')) {
-      throw new Error(
-        `Gyazo did not respond within ${REQUEST_TIMEOUT_MS}ms. ` +
-          'Retry, or raise GYAZO_HTTP_TIMEOUT_MS for a slow link.',
-      );
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await axios.get(url, {
+        headers: requestHeaders,
+        params,
+        timeout: REQUEST_TIMEOUT_MS,
+      });
+      return response.data;
+    } catch (error: any) {
+      if (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || '')) {
+        throw new Error(
+          `Gyazo did not respond within ${REQUEST_TIMEOUT_MS}ms. ` +
+            'Retry, or raise GYAZO_HTTP_TIMEOUT_MS for a slow link.',
+        );
+      }
+      if (error.response && error.response.status === 401) {
+        // The status alone reads as a bug in the caller. It is not: the token
+        // is present and Gyazo will not take it. That happens when it is
+        // mistyped, when it has been revoked, and when Gyazo revokes tokens in
+        // bulk, as it did after the 2026-09-11 incident.
+        throw new Error(
+          'Gyazo rejected the access token (401). Issue a new one at ' +
+            'https://gyazo.com/oauth/applications and save it with ' +
+            '`gyazo config set token <token>`.',
+        );
+      }
+      if (error.response && error.response.status === 429) {
+        if (attempt >= MAX_RETRIES) {
+          throw new Error(
+            `Gyazo kept rate limiting after ${MAX_RETRIES} retries. ` +
+              'Wait a while before trying again; the limit is not documented and ' +
+              'hammering it keeps the window from clearing.',
+          );
+        }
+        // Exponential: base, 2x, 4x, ... capped. Retry-After is a floor.
+        // Full jitter so parallel callers do not line up on the same instant.
+        const backoff = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** attempt);
+        const retryAfterMs = (parseInt(error.response.headers['retry-after'] || '0', 10) || 0) * 1000;
+        const wait = Math.max(retryAfterMs, Math.round(Math.random() * backoff));
+        console.warn(
+          `Rate limited. Waiting ${(wait / 1000).toFixed(1)}s ` +
+            `(retry ${attempt + 1}/${MAX_RETRIES})...`,
+        );
+        await sleep(wait);
+        continue;
+      }
+      throw error;
     }
-    if (error.response && error.response.status === 401) {
-      // The status alone reads as a bug in the caller. It is not: the token
-      // is present and Gyazo will not take it. That happens when it is
-      // mistyped, when it has been revoked, and when Gyazo revokes tokens in
-      // bulk, as it did after the 2026-09-11 incident.
-      throw new Error(
-        'Gyazo rejected the access token (401). Issue a new one at ' +
-          'https://gyazo.com/oauth/applications and save it with ' +
-          '`gyazo config set token <token>`.',
-      );
-    }
-    if (error.response && error.response.status === 429) {
-      const retryAfter = parseInt(error.response.headers['retry-after'] || '5', 10);
-      console.warn(`Rate limited. Retrying after ${retryAfter} seconds...`);
-      await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
-      return requestWithRetry(url, params, headers);
-    }
-    throw error;
   }
 }
 

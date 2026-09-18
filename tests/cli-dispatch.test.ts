@@ -768,6 +768,58 @@ test('a request that never responds fails instead of hanging forever', async () 
   }
 }, 15000);
 
+test('a 429 is retried with backoff and then succeeds', async () => {
+  const cacheDir = createTempCacheDir();
+  let hits = 0;
+  const stub = await startStubServer((req, res) => {
+    if (req.url && req.url.startsWith('/api/images')) {
+      hits++;
+      if (hits < 3) {
+        // Rate limited, with no Retry-After: the old code waited a fixed 5s
+        // forever; the backoff must grow its own wait and still get through.
+        res.writeHead(429, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'rate limited' }));
+        return;
+      }
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify([]));
+  });
+  try {
+    const result = await runCli(cacheDir, ['ls', '--limit', '1'], {
+      apiOrigin: stub.origin,
+      env: { GYAZO_RETRY_BASE_MS: '20' },
+    });
+    expect(result.status).toBe(0);
+    expect(hits).toBe(3);
+  } finally {
+    await stub.close();
+  }
+}, 15000);
+
+test('a persistent 429 gives up instead of retrying forever', async () => {
+  const cacheDir = createTempCacheDir();
+  let hits = 0;
+  const stub = await startStubServer((req, res) => {
+    if (req.url && req.url.startsWith('/api/images')) hits++;
+    res.writeHead(429, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ message: 'rate limited' }));
+  });
+  try {
+    const result = await runCli(cacheDir, ['ls', '--limit', '1'], {
+      apiOrigin: stub.origin,
+      env: { GYAZO_RETRY_BASE_MS: '20', GYAZO_MAX_RETRIES: '4' },
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/rate limit/i);
+    // Bounded: the first try plus a fixed number of retries, not an endless loop.
+    expect(hits).toBeLessThanOrEqual(5);
+    expect(hits).toBeGreaterThanOrEqual(4);
+  } finally {
+    await stub.close();
+  }
+}, 15000);
+
 // --- an access token that is no longer accepted ----------------------------
 
 /** Every authenticated endpoint answering the way a revoked token gets answered. */
