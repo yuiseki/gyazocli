@@ -51,15 +51,33 @@ export function registerTouchCommand(program: Command): void {
         process.exit(1);
       }
 
-      let failed = 0;
+      // A list from `cosensecli list-gyazo` is full of things that are not
+      // captures: /search/... , /signup, other hosts. Those are noise, not
+      // failures, so they are dropped before anything is attempted and never
+      // reach the exit code. Duplicates (the same capture as a permalink and
+      // as an i.gyazo.com URL) collapse to one.
+      const seen = new Set<string>();
+      const imageIds: string[] = [];
+      let ignored = 0;
       for (const input of inputs) {
         const imageId = normalizeImageId(input);
         if (!imageId) {
-          console.error(`skip: '${input}' is not a Gyazo image ID or URL`);
-          failed++;
+          ignored++;
           continue;
         }
+        if (seen.has(imageId)) continue;
+        seen.add(imageId);
+        imageIds.push(imageId);
+      }
 
+      if (imageIds.length === 0) {
+        console.log(`No captures to touch (${ignored} non-image URLs ignored).`);
+        return;
+      }
+
+      let touched = 0;
+      let failed = 0;
+      for (const imageId of imageIds) {
         try {
           const image = await getImageDetail(imageId);
           // Never turn a deliberately private capture public.
@@ -70,14 +88,15 @@ export function registerTouchCommand(program: Command): void {
           }
           await touchAccessPolicy(imageId, cookieHeader);
           console.log(`touched: https://gyazo.com/${imageId}`);
+          touched++;
         } catch (error: any) {
           console.error(`failed: ${imageId}: ${error.message}`);
           failed++;
         }
       }
 
-      const done = inputs.length - failed;
-      console.log(`\n${done} touched, ${failed} skipped or failed.`);
+      console.log(`\n${touched} touched, ${failed} failed, ${ignored} ignored.`);
+      // Only a real capture that could not be touched is an error; noise is not.
       if (failed > 0) process.exit(1);
     });
 }

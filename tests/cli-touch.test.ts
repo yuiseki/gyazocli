@@ -105,7 +105,7 @@ test('touch without cookies explains, and touches nothing', async () => {
   }
 });
 
-test('touch rejects a non-Gyazo argument without calling out', async () => {
+test('a non-Gyazo argument is ignored, not an error', async () => {
   const cacheDir = createTempCacheDir();
   const { handler, patches } = touchStub();
   const stub = await startStubServer(handler);
@@ -115,8 +115,10 @@ test('touch rejects a non-Gyazo argument without calling out', async () => {
       webOrigin: stub.origin,
       cookieFile: cookieFile(cacheDir),
     });
-    expect(result.status).toBe(1);
+    // Noise, not a failure: nothing patched, and it exits clean.
+    expect(result.status).toBe(0);
     expect(patches).toHaveLength(0);
+    expect(result.stdout).toMatch(/ignored/i);
   } finally {
     await stub.close();
   }
@@ -189,6 +191,37 @@ test('touch refuses a capture that is only_me', async () => {
     expect(patches).toHaveLength(0);
     expect(result.status).toBe(1);
     expect(result.stderr).toMatch(/only_me/);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('touch drops non-image URLs as noise and dedupes, without failing', async () => {
+  const cacheDir = createTempCacheDir();
+  const { handler, patches } = touchStub();
+  const stub = await startStubServer(handler);
+  const input = [
+    `https://gyazo.com/${ID_A}`,
+    `https://i.gyazo.com/${ID_A}.png`,       // same capture, other host
+    'https://gyazo.com/search/twitter.com',   // noise
+    'https://gyazo.com/search/%s',            // noise
+    'https://gyazo.com/signup',               // noise
+    `https://i.gyazo.com/${ID_B}.png`,        // a real one
+  ].join('\n') + '\n';
+  try {
+    const result = await runCli(cacheDir, ['touch'], {
+      apiOrigin: stub.origin,
+      webOrigin: stub.origin,
+      cookieFile: cookieFile(cacheDir),
+      input,
+    });
+    // Noise does not make it fail.
+    expect(result.status).toBe(0);
+    // Each real capture touched once, deduped, and no noise reached the API.
+    expect(patches.map((p) => p.id)).toEqual([ID_A, ID_A, ID_B, ID_B]);
+    // It says how many it ignored.
+    expect(result.stdout).toMatch(/2 touched/);
+    expect(result.stdout).toMatch(/3 ignored|ignored 3/i);
   } finally {
     await stub.close();
   }

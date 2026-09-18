@@ -101,7 +101,9 @@ Adopt and document the existing top-level command structure.
     re-materialise it, for images that stopped being delivered after the
     2026-09-11 incident. Leaves the capture public
   - Reads URLs from arguments and from stdin (one per line), so
-    `cosensecli list-gyazo | gyazo touch` works
+    `cosensecli list-gyazo | gyazo touch` works. Non-image URLs in the input
+    (`/search/...`, `/signup`, other hosts) are ignored as noise, not counted
+    as failures; duplicates collapse by image ID
   - Needs gyazo.com cookies (same lookup as triage). Refuses a capture that is
     already `only_me`, since the cycle would end at `anyone` and expose it.
     Exits non-zero if any capture was skipped or failed
