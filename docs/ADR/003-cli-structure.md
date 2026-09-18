@@ -109,9 +109,11 @@ Adopt and document the existing top-level command structure.
     Exits non-zero if any capture was skipped or failed
   - Touched captures are appended to
     `${XDG_STATE_HOME:-~/.local/state}/gyazocli/touched.txt` (one URL per line,
-    on success only), and one already recorded is skipped on the next run so a
-    re-piped list is cheap. `--again` re-touches
-  - Options: `--cookies <path>`, `--out <path>`, `--again`
+    on success only). Failures go to `touch-failed.txt` as `<url>\t<reason>`.
+    On a re-run, captures already touched and captures recorded as `404` (gone)
+    are skipped; other failures (a timeout, a 5xx) are retried. `--again` redoes
+    everything
+  - Options: `--cookies <path>`, `--out <path>`, `--failed <path>`, `--again`
 - `gyazo apps`
   - Default range: from 8 days ago to yesterday
   - Options:

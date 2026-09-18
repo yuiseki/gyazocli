@@ -40,6 +40,30 @@ function loadTouched(file: string): Set<string> {
   return new Set(ids);
 }
 
+/**
+ * The image IDs recorded as gone (404). Those do not come back by retrying, so
+ * a re-run skips them. Other recorded failures (a timeout, a 5xx) are left out,
+ * so they are tried again. The file is `<url>\t<reason>` per line.
+ */
+function loadGone(file: string): Set<string> {
+  if (!fs.existsSync(file)) return new Set();
+  const gone = new Set<string>();
+  for (const line of fs.readFileSync(file, 'utf-8').split('\n')) {
+    const [url, reason = ''] = line.split('\t');
+    const id = normalizeImageId((url || '').trim());
+    if (id && /\b404\b|gone/i.test(reason)) gone.add(id);
+  }
+  return gone;
+}
+
+function defaultFailedPath(): string {
+  const base =
+    process.env.GYAZO_STATE_DIR ||
+    process.env.XDG_STATE_HOME ||
+    path.join(os.homedir(), '.local', 'state');
+  return path.join(base, 'gyazocli', 'touch-failed.txt');
+}
+
 async function collectFromStdin(): Promise<string[]> {
   if (process.stdin.isTTY) return [];
   const lines: string[] = [];
@@ -57,6 +81,7 @@ export function registerTouchCommand(program: Command): void {
     .description('Cycle a public capture only_me→anyone to restore it (needs cookies)')
     .option('--cookies <path>', 'gyazo.com cookies')
     .option('--out <path>', 'file to record touched captures in')
+    .option('--failed <path>', 'file to record failures in')
     .option('--again', 'touch even captures already recorded')
     .action(async (urls: string[], options) => {
       await ensureAccessToken();
@@ -96,18 +121,28 @@ export function registerTouchCommand(program: Command): void {
       }
 
       const ledgerPath = options.out || defaultLedgerPath();
-      const alreadyDone = options.again ? new Set<string>() : loadTouched(ledgerPath);
-      const skippedAsDone = imageIds.filter((id) => alreadyDone.has(id)).length;
-      const todo = imageIds.filter((id) => !alreadyDone.has(id));
+      const failedPath = options.failed || defaultFailedPath();
+      // Already touched, or gone for good. Both are skipped unless --again;
+      // a transient failure recorded earlier is not, so it gets retried.
+      const skip = options.again
+        ? new Set<string>()
+        : new Set<string>([...loadTouched(ledgerPath), ...loadGone(failedPath)]);
+      const skippedAsDone = imageIds.filter((id) => skip.has(id)).length;
+      const todo = imageIds.filter((id) => !skip.has(id));
 
       if (todo.length === 0) {
         console.log(
-          `Nothing to do: ${skippedAsDone} already touched, ${ignored} non-image URLs ignored.`,
+          `Nothing to do: ${skippedAsDone} already done, ${ignored} non-image URLs ignored.`,
         );
         return;
       }
 
       fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
+      fs.mkdirSync(path.dirname(failedPath), { recursive: true });
+
+      const recordFailure = (imageId: string, reason: string) => {
+        fs.appendFileSync(failedPath, `https://gyazo.com/${imageId}\t${reason}\n`, 'utf-8');
+      };
 
       let touched = 0;
       let failed = 0;
@@ -117,6 +152,7 @@ export function registerTouchCommand(program: Command): void {
           // Never turn a deliberately private capture public.
           if (image?.access_policy === 'only_me') {
             console.error(`skip: ${imageId} is only_me; refusing to make it public`);
+            recordFailure(imageId, 'only_me');
             failed++;
             continue;
           }
@@ -128,7 +164,10 @@ export function registerTouchCommand(program: Command): void {
           console.log(`touched: ${link}`);
           touched++;
         } catch (error: any) {
-          console.error(`failed: ${imageId}: ${error.message}`);
+          const status = error?.response?.status;
+          const reason = status === 404 ? '404' : (error.message || 'error').replace(/\s+/g, ' ');
+          console.error(`failed: ${imageId}: ${status === 404 ? 'not found (404)' : error.message}`);
+          recordFailure(imageId, reason);
           failed++;
         }
       }
@@ -137,7 +176,8 @@ export function registerTouchCommand(program: Command): void {
         `\n${touched} touched, ${failed} failed, ` +
           `${skippedAsDone} already done, ${ignored} ignored.`,
       );
-      console.log(`Recorded in ${ledgerPath}`);
+      console.log(`Touched recorded in ${ledgerPath}`);
+      if (failed > 0) console.log(`Failures recorded in ${failedPath}`);
       // Only a real capture that could not be touched is an error; noise is not.
       if (failed > 0) process.exit(1);
     });

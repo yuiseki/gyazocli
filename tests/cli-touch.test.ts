@@ -280,3 +280,54 @@ test('touch --again re-touches even a recorded capture', async () => {
     await stub.close();
   }
 });
+
+test('a 404 is recorded as gone and skipped next time; a transient error is retried', async () => {
+  const cacheDir = createTempCacheDir();
+  const gone = `ce${'0'.repeat(30)}`;   // 404 on detail
+  const flaky = `cf${'0'.repeat(30)}`;  // 500 on detail this run
+  let flakyShouldFail = true;
+  const stub = await startStubServer((req, res, body) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    if (url.pathname.startsWith('/api/images/')) {
+      const id = url.pathname.split('/').pop() || '';
+      if (id === gone) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end('{"message":"not found"}'); return; }
+      if (id === flaky && flakyShouldFail) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{}'); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ image_id: id, access_policy: 'anyone' }));
+      return;
+    }
+    if (req.method === 'PATCH') {
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{}'); return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<html><head><meta name="csrf-token" content="tok"></head></html>');
+  });
+  const out = path.join(cacheDir, 'touched.txt');
+  const failed = path.join(cacheDir, 'failed.txt');
+  try {
+    const first = await runCli(
+      cacheDir,
+      ['touch', `https://gyazo.com/${gone}`, `https://gyazo.com/${flaky}`, '--out', out, '--failed', failed],
+      { apiOrigin: stub.origin, webOrigin: stub.origin, cookieFile: cookieFile(cacheDir) },
+    );
+    expect(first.status).toBe(1);
+    const rows = fs.readFileSync(failed, 'utf8').split('\n').filter(Boolean);
+    expect(rows.some((r) => r.includes(gone) && /404|gone/i.test(r))).toBe(true);
+    expect(rows.some((r) => r.includes(flaky))).toBe(true);
+
+    // Second run: the flaky one now succeeds. The 404 is skipped, the flaky retried.
+    flakyShouldFail = false;
+    const detailHits: string[] = [];
+    const second = await runCli(
+      cacheDir,
+      ['touch', `https://gyazo.com/${gone}`, `https://gyazo.com/${flaky}`, '--out', out, '--failed', failed],
+      { apiOrigin: stub.origin, webOrigin: stub.origin, cookieFile: cookieFile(cacheDir) },
+    );
+    expect(second.status).toBe(0);
+    // The flaky one got touched this time; the gone one was not attempted.
+    expect(fs.readFileSync(out, 'utf8')).toContain(flaky);
+    expect(second.stdout).not.toContain(gone);
+  } finally {
+    await stub.close();
+  }
+});
