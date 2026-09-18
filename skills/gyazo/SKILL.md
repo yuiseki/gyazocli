@@ -169,6 +169,20 @@ re-fetching.
   output; the top-level `exif_normalized` is always null. Screenshots carry
   neither.
 
+## Restoring broken embeds
+
+```bash
+gyazo touch https://gyazo.com/<id>
+cosensecli list-gyazo | gyazo touch
+```
+
+`touch` cycles a public capture's access policy (only_me then back to anyone),
+which brings back images that stopped being delivered after the 2026-09-11
+incident. It needs gyazo.com cookies, leaves the capture public, and refuses a
+capture that is already `only_me` so it never exposes a private one. It writes
+to the account, so it is not something to run on a user's behalf without being
+asked.
+
 ## Serving the same data over MCP
 
 `gyazo --mcp-server` runs the same functionality as a Model Context Protocol

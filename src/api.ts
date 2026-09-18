@@ -44,6 +44,7 @@ const apiCollectionImagesUrl = (id: string) => `${apiCollectionUrl(id)}/images`;
 
 export interface GyazoImage {
   image_id: string;
+  access_policy?: string;
   permalink_url: string;
   url: string;
   type: string;
@@ -244,17 +245,16 @@ export async function fetchImageRendition(
  * needs the session cookie and the CSRF token that goes with it: without the
  * token the request comes back 422 with an empty body.
  */
-export async function setAccessPolicy(
-  imageId: string,
-  accessPolicy: 'anyone' | 'only_me',
-  cookieHeader: string,
-): Promise<any> {
+/**
+ * The CSRF token from a capture's own page, which the internal endpoint wants
+ * back. A redirect to login means the cookies are stale, so it is not followed
+ * into a page that has no token.
+ */
+async function fetchCsrfToken(imageId: string, cookieHeader: string): Promise<string> {
   const page = await axios.get(`${webOrigin()}/${imageId}`, {
     headers: { Cookie: cookieHeader },
     responseType: 'text',
     timeout: REQUEST_TIMEOUT_MS,
-    // A redirect to the login page means the cookies are stale; let it be
-    // seen rather than followed into an HTML page with no token.
     maxRedirects: 0,
     validateStatus: (status: number) => status >= 200 && status < 400,
   } as any);
@@ -264,7 +264,15 @@ export async function setAccessPolicy(
       'could not read a CSRF token from gyazo.com; the cookies are probably expired',
     );
   }
+  return token;
+}
 
+async function patchAccessPolicy(
+  imageId: string,
+  accessPolicy: 'anyone' | 'only_me',
+  cookieHeader: string,
+  token: string,
+): Promise<any> {
   const response = await axios.patch(
     `${webOrigin()}/api/internal/images/${imageId}`,
     { access_policy: accessPolicy },
@@ -279,6 +287,27 @@ export async function setAccessPolicy(
     },
   );
   return response.data;
+}
+
+export async function setAccessPolicy(
+  imageId: string,
+  accessPolicy: 'anyone' | 'only_me',
+  cookieHeader: string,
+): Promise<any> {
+  const token = await fetchCsrfToken(imageId, cookieHeader);
+  return patchAccessPolicy(imageId, accessPolicy, cookieHeader, token);
+}
+
+/**
+ * Poke a capture's access policy so Gyazo re-materialises it: only_me, then
+ * back to anyone. After the 2026-09-11 incident some public images stopped
+ * being delivered, and this cycle brings one back while leaving it public.
+ * One CSRF token serves both steps.
+ */
+export async function touchAccessPolicy(imageId: string, cookieHeader: string): Promise<void> {
+  const token = await fetchCsrfToken(imageId, cookieHeader);
+  await patchAccessPolicy(imageId, 'only_me', cookieHeader, token);
+  await patchAccessPolicy(imageId, 'anyone', cookieHeader, token);
 }
 
 export async function uploadImage(options: GyazoUploadOptions): Promise<GyazoImage> {

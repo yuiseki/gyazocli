@@ -96,6 +96,16 @@ Adopt and document the existing top-level command structure.
     answered. Answers are appended to
     `${XDG_STATE_HOME:-~/.local/state}/gyazocli/triage.jsonl`, outside the
     cache, because a judgement cannot be fetched again
+- `gyazo touch [url...]`
+  - Cycle a public capture's access policy only_me→anyone to force Gyazo to
+    re-materialise it, for images that stopped being delivered after the
+    2026-09-11 incident. Leaves the capture public
+  - Reads URLs from arguments and from stdin (one per line), so
+    `cosensecli list-gyazo | gyazo touch` works
+  - Needs gyazo.com cookies (same lookup as triage). Refuses a capture that is
+    already `only_me`, since the cycle would end at `anyone` and expose it.
+    Exits non-zero if any capture was skipped or failed
+  - Options: `--cookies <path>`
 - `gyazo apps`
   - Default range: from 8 days ago to yesterday
   - Options:
