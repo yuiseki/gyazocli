@@ -107,7 +107,11 @@ Adopt and document the existing top-level command structure.
   - Needs gyazo.com cookies (same lookup as triage). Refuses a capture that is
     already `only_me`, since the cycle would end at `anyone` and expose it.
     Exits non-zero if any capture was skipped or failed
-  - Options: `--cookies <path>`
+  - Touched captures are appended to
+    `${XDG_STATE_HOME:-~/.local/state}/gyazocli/touched.txt` (one URL per line,
+    on success only), and one already recorded is skipped on the next run so a
+    re-piped list is cheap. `--again` re-touches
+  - Options: `--cookies <path>`, `--out <path>`, `--again`
 - `gyazo apps`
   - Default range: from 8 days ago to yesterday
   - Options:

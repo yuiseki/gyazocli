@@ -226,3 +226,57 @@ test('touch drops non-image URLs as noise and dedupes, without failing', async (
     await stub.close();
   }
 });
+
+test('touched captures are recorded, and skipped on the next run', async () => {
+  const cacheDir = createTempCacheDir();
+  const { handler, patches } = touchStub();
+  const stub = await startStubServer(handler);
+  const out = path.join(cacheDir, 'touched.txt');
+  try {
+    const first = await runCli(cacheDir, ['touch', `https://gyazo.com/${ID_A}`, '--out', out], {
+      apiOrigin: stub.origin,
+      webOrigin: stub.origin,
+      cookieFile: cookieFile(cacheDir),
+    });
+    expect(first.status).toBe(0);
+    // One line, the touched capture.
+    const recorded = fs.readFileSync(out, 'utf8').split('\n').filter(Boolean);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toContain(ID_A);
+
+    // Re-running with the same capture plus a new one: only the new one is touched.
+    patches.length = 0;
+    const second = await runCli(
+      cacheDir,
+      ['touch', `https://gyazo.com/${ID_A}`, `https://gyazo.com/${ID_B}`, '--out', out],
+      { apiOrigin: stub.origin, webOrigin: stub.origin, cookieFile: cookieFile(cacheDir) },
+    );
+    expect(second.status).toBe(0);
+    expect(patches.map((p) => p.id)).toEqual([ID_B, ID_B]);
+    expect(second.stdout).toMatch(/1 already done|already touched/i);
+    // The file now has both.
+    const after = fs.readFileSync(out, 'utf8').split('\n').filter(Boolean);
+    expect(after).toHaveLength(2);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('touch --again re-touches even a recorded capture', async () => {
+  const cacheDir = createTempCacheDir();
+  const { handler, patches } = touchStub();
+  const stub = await startStubServer(handler);
+  const out = path.join(cacheDir, 'touched.txt');
+  try {
+    await runCli(cacheDir, ['touch', `https://gyazo.com/${ID_A}`, '--out', out], {
+      apiOrigin: stub.origin, webOrigin: stub.origin, cookieFile: cookieFile(cacheDir),
+    });
+    patches.length = 0;
+    await runCli(cacheDir, ['touch', `https://gyazo.com/${ID_A}`, '--out', out, '--again'], {
+      apiOrigin: stub.origin, webOrigin: stub.origin, cookieFile: cookieFile(cacheDir),
+    });
+    expect(patches.map((p) => p.id)).toEqual([ID_A, ID_A]);
+  } finally {
+    await stub.close();
+  }
+});

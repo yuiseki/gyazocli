@@ -179,7 +179,10 @@ cosensecli list-gyazo | gyazo touch
 `touch` cycles a public capture's access policy (only_me then back to anyone),
 which brings back images that stopped being delivered after the 2026-09-11
 incident. It needs gyazo.com cookies, leaves the capture public, and refuses a
-capture that is already `only_me` so it never exposes a private one. It writes
+capture that is already `only_me` so it never exposes a private one. Non-image
+URLs in the input are ignored. Touched captures are recorded in
+`${XDG_STATE_HOME:-~/.local/state}/gyazocli/touched.txt` (or `--out`), and one
+already recorded is skipped next time. It writes
 to the account, so it is not something to run on a user's behalf without being
 asked.
 
