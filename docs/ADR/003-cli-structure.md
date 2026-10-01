@@ -114,6 +114,19 @@ Adopt and document the existing top-level command structure.
     are skipped; other failures (a timeout, a 5xx) are retried. `--again` redoes
     everything
   - Options: `--cookies <path>`, `--out <path>`, `--failed <path>`, `--again`
+- `gyazo restore [url...]`
+  - Resume distribution of captures Gyazo incident-protected after 2026-09-11
+    (`配信を再開する`), via `PATCH /api/internal/images_incident_protection`
+    with a batch of image_ids. The protection is a flag separate from
+    access_policy, so this never changes a capture's public/private setting
+  - Reads URLs from arguments and stdin; drops non-image URLs as noise; dedupes
+    by image ID; sends them in batches (`--batch-size`, default 50) with one
+    CSRF token per run
+  - Records restored captures in
+    `${XDG_STATE_HOME:-~/.local/state}/gyazocli/restored.txt` and failures in
+    `restore-failed.txt`; a recorded one is skipped next run. `--again` redoes
+  - Needs gyazo.com cookies. Options: `--cookies`, `--out`, `--failed`,
+    `--batch-size`, `--again`
 - `gyazo apps`
   - Default range: from 8 days ago to yesterday
   - Options:

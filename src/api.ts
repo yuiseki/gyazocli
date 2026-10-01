@@ -278,8 +278,8 @@ export async function fetchImageRendition(
  * back. A redirect to login means the cookies are stale, so it is not followed
  * into a page that has no token.
  */
-async function fetchCsrfToken(imageId: string, cookieHeader: string): Promise<string> {
-  const page = await axios.get(`${webOrigin()}/${imageId}`, {
+async function fetchCsrfToken(pathSegment: string, cookieHeader: string): Promise<string> {
+  const page = await axios.get(`${webOrigin()}/${pathSegment}`, {
     headers: { Cookie: cookieHeader },
     responseType: 'text',
     timeout: REQUEST_TIMEOUT_MS,
@@ -336,6 +336,47 @@ export async function touchAccessPolicy(imageId: string, cookieHeader: string): 
   const token = await fetchCsrfToken(imageId, cookieHeader);
   await patchAccessPolicy(imageId, 'only_me', cookieHeader, token);
   await patchAccessPolicy(imageId, 'anyone', cookieHeader, token);
+}
+
+/**
+ * Lift the incident protection that Gyazo put on pre-breach images after the
+ * 2026-09-11 incident, which is what "配信を再開する" (resume distribution)
+ * does. This is a flag of its own, separate from access_policy, so clearing it
+ * restores a capture to whatever visibility it already had and never makes a
+ * deliberately private (only_me) capture public.
+ *
+ * The endpoint takes a batch of image_ids in one PATCH, so a whole list is a
+ * few calls rather than one per capture. One CSRF token serves the run; it is
+ * read from the first capture's page.
+ *
+ * The direction here -- PATCH clears the protection -- is the shape given for
+ * the "resume distribution" action; confirm it on a single capture before a
+ * bulk run, since it cannot be checked without hitting the live site.
+ */
+export async function resumeDistribution(
+  imageIds: string[],
+  cookieHeader: string,
+  token: string,
+): Promise<any> {
+  const response = await axios.patch(
+    `${webOrigin()}/api/internal/images_incident_protection`,
+    { image_ids: imageIds },
+    {
+      timeout: REQUEST_TIMEOUT_MS,
+      headers: {
+        Cookie: cookieHeader,
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': token,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    },
+  );
+  return response.data;
+}
+
+/** A CSRF token for a run of batched calls, read from one capture's page. */
+export async function csrfTokenForRun(imageId: string, cookieHeader: string): Promise<string> {
+  return fetchCsrfToken(imageId, cookieHeader);
 }
 
 export async function uploadImage(options: GyazoUploadOptions): Promise<GyazoImage> {
