@@ -191,6 +191,162 @@ function getHourlyMetadataPath(
 export function saveImageCache(imageId: string, data: any): void {
   const filePath = getImagePath(imageId);
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  // Keep the readdir-only markers in step with every cache write, so coverage
+  // and `stats size` never have to open the record again.
+  writeCacheMarkers(imageId, data?.created_at, data?.file_size);
+}
+
+// Sidecar markers next to each `<id>.json`, so coverage and stats size can work
+// from readdir alone -- no opening ~100k records to read two scalars. The month
+// marker carries the created_at month, the size marker carries file_size in its
+// own name, so a sum is pure map-reduce over filenames. Both are empty, immutable
+// (a capture's date and size do not change), and written independently, which is
+// why they are safe under the several syncs that run in parallel: each only ever
+// creates its own files, never a shared one.
+const MONTH_MARKER_RE = /^([0-9a-f]{32})\.m\.(?:(\d{4})-(\d{2})|unknown)$/;
+const SIZE_MARKER_RE = /^([0-9a-f]{32})\.s\.(\d+)$/;
+
+/** Create the markers for one record if missing. Idempotent: existing ones are left. */
+export function writeCacheMarkers(imageId: string, createdAt?: string, fileSize?: unknown): void {
+  const dir = path.dirname(getImagePath(imageId));
+  const m = /^(\d{4})-(\d{2})/.exec(createdAt || '');
+  const monthKey = m ? `${m[1]}-${m[2]}` : 'unknown';
+  const monthMarker = path.join(dir, `${imageId}.m.${monthKey}`);
+  try {
+    if (!fs.existsSync(monthMarker)) fs.writeFileSync(monthMarker, '');
+    if (typeof fileSize === 'number' && fileSize > 0) {
+      const sizeMarker = path.join(dir, `${imageId}.s.${fileSize}`);
+      if (!fs.existsSync(sizeMarker)) fs.writeFileSync(sizeMarker, '');
+    }
+  } catch {
+    // A marker is an optimisation; failing to write one just means the slow
+    // path is used until the next `sync --gen-marker`.
+  }
+}
+
+interface MarkerScan {
+  jsonCount: number;
+  /** id -> [year, month] where month is '1'..'12' (or 'unknown' as year='unknown'). */
+  monthById: Map<string, [string, string]>;
+  /** id -> file_size in bytes. */
+  bytesById: Map<string, number>;
+}
+
+/** One readdir pass over images/, classifying json files and markers by name. */
+function scanMarkers(): MarkerScan {
+  const root = path.join(getCacheDir(), 'images');
+  const jsonRe = /^[0-9a-f]{32}\.json$/;
+  const monthById = new Map<string, [string, string]>();
+  const bytesById = new Map<string, number>();
+  let jsonCount = 0;
+  if (!fs.existsSync(root)) return { jsonCount, monthById, bytesById };
+  const stack = [root];
+  while (stack.length) {
+    const current = stack.pop() as string;
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        stack.push(path.join(current, entry.name));
+        continue;
+      }
+      const name = entry.name;
+      if (jsonRe.test(name)) {
+        jsonCount += 1;
+        continue;
+      }
+      const mm = MONTH_MARKER_RE.exec(name);
+      if (mm) {
+        monthById.set(mm[1], mm[2] ? [mm[2], String(Number(mm[3]))] : ['unknown', 'unknown']);
+        continue;
+      }
+      const sm = SIZE_MARKER_RE.exec(name);
+      if (sm) bytesById.set(sm[1], Number(sm[2]));
+    }
+  }
+  return { jsonCount, monthById, bytesById };
+}
+
+/**
+ * True when markers cover essentially the whole cache, so the fast path is
+ * trustworthy. A small shortfall is tolerated: with several syncs running, a few
+ * records are always mid-write (json on disk, marker a moment behind), and a
+ * whole cache behind would mean markers were never built. 1% is well clear of
+ * both.
+ */
+function markersComplete(scan: MarkerScan): boolean {
+  return scan.jsonCount > 0 && scan.monthById.size >= scan.jsonCount * 0.99;
+}
+
+/** countCacheByMonth from markers alone (readdir, no record is opened); null if markers are incomplete. */
+export function countCacheByMonthFast(): {
+  byMonth: Record<string, Record<string, number>>;
+  sizedByMonth: Record<string, Record<string, number>>;
+  total: number;
+  sizedTotal: number;
+} | null {
+  const scan = scanMarkers();
+  if (!markersComplete(scan)) return null;
+  const byMonth: Record<string, Record<string, number>> = {};
+  const sizedByMonth: Record<string, Record<string, number>> = {};
+  let sizedTotal = 0;
+  for (const [id, [year, month]] of scan.monthById) {
+    (byMonth[year] ||= {})[month] = (byMonth[year][month] || 0) + 1;
+    if (scan.bytesById.has(id)) {
+      (sizedByMonth[year] ||= {})[month] = (sizedByMonth[year][month] || 0) + 1;
+      sizedTotal += 1;
+    }
+  }
+  return { byMonth, sizedByMonth, total: scan.monthById.size, sizedTotal };
+}
+
+/** sumCachedFileSizes from markers alone; null if markers are incomplete. */
+export function sumCachedFileSizesFast(): FileSizeSummary | null {
+  const scan = scanMarkers();
+  if (!markersComplete(scan)) return null;
+  let totalBytes = 0;
+  for (const bytes of scan.bytesById.values()) totalBytes += bytes;
+  return { images: scan.jsonCount, withSize: scan.bytesById.size, totalBytes };
+}
+
+/**
+ * Build the markers for every cached record (idempotent): `sync --gen-marker`.
+ * Reads each record's text once to get created_at and file_size, then writes any
+ * missing marker. Re-running only writes what is not already there.
+ */
+export function generateMarkersForCache(): { images: number; monthWritten: number; sizeWritten: number } {
+  let images = 0;
+  let monthWritten = 0;
+  let sizeWritten = 0;
+  for (const file of iterCachedImagePaths()) {
+    let text: string;
+    try {
+      text = fs.readFileSync(file, 'utf-8');
+    } catch {
+      continue;
+    }
+    images += 1;
+    const id = path.basename(file, '.json');
+    const dir = path.dirname(file);
+    const m = CREATED_AT_RE.exec(text);
+    const monthKey = m ? `${m[1]}-${m[2]}` : 'unknown';
+    const monthMarker = path.join(dir, `${id}.m.${monthKey}`);
+    try {
+      if (!fs.existsSync(monthMarker)) {
+        fs.writeFileSync(monthMarker, '');
+        monthWritten += 1;
+      }
+      const sizeMatch = FILE_SIZE_RE.exec(text);
+      if (sizeMatch && Number(sizeMatch[1]) > 0) {
+        const sizeMarker = path.join(dir, `${id}.s.${Number(sizeMatch[1])}`);
+        if (!fs.existsSync(sizeMarker)) {
+          fs.writeFileSync(sizeMarker, '');
+          sizeWritten += 1;
+        }
+      }
+    } catch {
+      // skip unwritable
+    }
+  }
+  return { images, monthWritten, sizeWritten };
 }
 
 export function loadImageCache(imageId: string): any | null {

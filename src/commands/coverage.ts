@@ -10,7 +10,7 @@
 import type { Command } from 'commander';
 import { loadCookieHeader } from '../cookies';
 import { fetchImagesSummary } from '../api';
-import { countCacheByMonth } from '../storage';
+import { countCacheByMonth, countCacheByMonthFast } from '../storage';
 
 interface CoverageRow {
   key: string; // 'YYYY' or 'YYYY-MM'
@@ -52,7 +52,15 @@ export function registerCoverageCommand(program: Command): void {
         process.exit(1);
       }
       const monthly: Record<string, Record<string, number>> = summary?.monthly_counts || {};
-      const { byMonth: cachedByMonth, sizedByMonth } = countCacheByMonth();
+      // Fast path: markers (readdir only). Falls back to reading every record
+      // when markers are missing or stale -- run `gyazo sync --gen-marker` once.
+      let counts = countCacheByMonthFast();
+      if (!counts) {
+        console.error('Note: markers missing; reading every record (slow). Run `gyazo sync --gen-marker` to speed this up.');
+        counts = countCacheByMonth();
+      }
+      const cachedByMonth = counts.byMonth;
+      const sizedByMonth = counts.sizedByMonth;
 
       const years = Array.from(new Set([...Object.keys(monthly), ...Object.keys(cachedByMonth)])).sort();
 

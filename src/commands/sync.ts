@@ -10,6 +10,7 @@ import {
   loadHourlyCache,
   loadSyncState,
   saveSyncState,
+  generateMarkersForCache,
 } from '../storage';
 import { ensureAccessToken } from '../credentials';
 import { loadCookieHeader } from '../cookies';
@@ -50,7 +51,21 @@ export function registerSyncCommand(program: Command): void {
     .option('--api', 'fetch detail from the OAuth API only (no file_size)')
     .option('--web-and-api', 'fetch from both and merge (full metadata + file_size)')
     .option('--cookies <path>', 'gyazo.com cookies for the web source')
+    .option('--gen-marker', 'build the readdir markers for every cached record (idempotent)')
     .action(async (options) => {
+      // --gen-marker is a maintenance pass over what is already cached: no
+      // network, no token. Idempotent -- it only writes markers that are missing.
+      if (options.genMarker) {
+        console.log('Generating markers for cached records...');
+        const r = generateMarkersForCache();
+        console.log(
+          `Done: ${r.images.toLocaleString('en-US')} records, ` +
+            `${r.monthWritten.toLocaleString('en-US')} month markers and ` +
+            `${r.sizeWritten.toLocaleString('en-US')} size markers written.`,
+        );
+        return;
+      }
+
       await ensureAccessToken();
 
       const sourceFlags = [options.web, options.api, options.webAndApi].filter(Boolean);

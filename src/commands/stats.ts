@@ -8,6 +8,7 @@ import { parsePositiveIntegerOption } from '../options';
 import {
   countCache,
   sumCachedFileSizes,
+  sumCachedFileSizesFast,
 } from '../storage';
 
 function formatBytes(bytes: number): string {
@@ -147,7 +148,12 @@ export function registerStatsCommand(program: Command): void {
     .command('size')
     .description('Total the file size of cached images that have one')
     .action(() => {
-      const summary = sumCachedFileSizes();
+      // Fast path: size markers (readdir only). Falls back to reading records.
+      let summary = sumCachedFileSizesFast();
+      if (!summary) {
+        console.error('Note: markers missing; reading every record (slow). Run `gyazo sync --gen-marker` to speed this up.');
+        summary = sumCachedFileSizes();
+      }
       const pct = summary.images > 0 ? Math.round((summary.withSize / summary.images) * 100) : 0;
       console.log(`Total size: ${formatBytes(summary.totalBytes)} (${summary.totalBytes.toLocaleString('en-US')} bytes)`);
       console.log(`Known for ${summary.withSize.toLocaleString('en-US')} of ${summary.images.toLocaleString('en-US')} cached images (${pct}%)`);
