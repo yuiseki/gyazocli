@@ -50,6 +50,7 @@ const apiUploadUrl = () => `${uploadOrigin()}/api/upload`;
 const webCollectionUrl = (id: string) => `${webOrigin()}/collections/${id}.json`;
 const webBoardImagesUrl = (id: string) => `${webOrigin()}/api/internal/boards/${id}/images`;
 const webImageJsonUrl = (id: string) => `${webOrigin()}/${id}.json`;
+const webImagesSummaryUrl = () => `${webOrigin()}/api/internal/images_summary`;
 const apiCollectionsUrl = () => `${apiOrigin()}/api/v2/collections`;
 const apiCollectionUrl = (id: string) => `${apiCollectionsUrl()}/${id}`;
 const apiCollectionImagesUrl = (id: string) => `${apiCollectionUrl(id)}/images`;
@@ -263,6 +264,24 @@ export async function fetchImageWebJson(imageId: string, cookieHeader?: string):
   const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
   if (cookieHeader) headers.Cookie = cookieHeader;
   return requestWithRetry(webImageJsonUrl(imageId), {}, headers);
+}
+
+/**
+ * The account's true image counts by month and day, from the web app's own
+ * endpoint (`api/internal/images_summary`). This is the only source for the real
+ * population size and its distribution over time: the public listing and search
+ * cannot enumerate the whole account, so counting what is cached undercounts.
+ * Shape: { monthly_counts: { [year]: { [month]: n } }, daily_counts: {...} }.
+ */
+export async function fetchImagesSummary(
+  cookieHeader: string,
+  timezone: string = 'Asia/Tokyo',
+): Promise<any> {
+  return requestWithRetry(
+    webImagesSummaryUrl(),
+    { timezone },
+    { Cookie: cookieHeader, 'X-Requested-With': 'XMLHttpRequest' },
+  );
 }
 
 export type RenditionFormat = 'webp' | 'jpeg';

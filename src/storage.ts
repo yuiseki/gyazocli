@@ -30,6 +30,31 @@ function countJsonFiles(dir: string): number {
   return total;
 }
 
+/**
+ * How many cached images fall in each year and month, by their created_at, so
+ * cache coverage can be compared against the account's true monthly counts.
+ * Shape mirrors images_summary: { [year]: { [month]: n } }. Reads every record.
+ */
+export function countCacheByMonth(): { byMonth: Record<string, Record<string, number>>; total: number } {
+  const byMonth: Record<string, Record<string, number>> = {};
+  let total = 0;
+  for (const file of iterCachedImagePaths()) {
+    let createdAt = '';
+    try {
+      createdAt = JSON.parse(fs.readFileSync(file, 'utf-8'))?.created_at || '';
+    } catch {
+      continue;
+    }
+    const m = /^(\d{4})-(\d{2})/.exec(createdAt);
+    if (!m) continue;
+    const year = m[1];
+    const month = String(Number(m[2])); // '04' -> '4', to match images_summary
+    (byMonth[year] ||= {})[month] = (byMonth[year][month] || 0) + 1;
+    total += 1;
+  }
+  return { byMonth, total };
+}
+
 export interface CacheCounts {
   /** Image detail records: the authoritative "how many images are cached". */
   images: number;

@@ -6,9 +6,10 @@ import { ensureAccessToken } from '../credentials';
 import { buildStatsDateRange } from '../dates';
 import { parsePositiveIntegerOption } from '../options';
 import { loadCookieHeader } from '../cookies';
-import { fetchImageWebJson } from '../api';
+import { fetchImageWebJson, fetchImagesSummary } from '../api';
 import {
   countCache,
+  countCacheByMonth,
   sumCachedFileSizes,
   cachedImageIdsMissingFileSize,
   sampleCachedImageIds,
@@ -202,6 +203,61 @@ export function registerStatsCommand(program: Command): void {
       console.log(`Search-only cache: ${n(counts.searchImages)}`);
       console.log(`Hourly index files: ${n(counts.hourlyFiles)}`);
       console.log(`Cache dir: ${counts.cacheDir}`);
+    });
+
+  // `stats coverage`: how much of the account is actually cached, by year, from
+  // the account's true monthly counts (images_summary) against what is on disk.
+  // The listing and search cannot enumerate the whole account, so this is the
+  // only honest picture of what is still only on Gyazo -- the salvage map.
+  stats
+    .command('coverage')
+    .description("Cache coverage against the account's true counts (needs cookies)")
+    .option('--cookies <path>', 'gyazo.com cookies')
+    .option('-j, --json', 'output as JSON')
+    .action(async (options) => {
+      const cookieHeader = loadCookieHeader(options.cookies);
+      if (!cookieHeader) {
+        console.error('Error: stats coverage needs gyazo.com cookies.');
+        console.error('Put them in ~/.config/gyazo/cookie.json or pass --cookies <path>.');
+        process.exit(1);
+      }
+      let summary: any;
+      try {
+        summary = await fetchImagesSummary(cookieHeader);
+      } catch (error: any) {
+        console.error('Error fetching images_summary:', error.message);
+        process.exit(1);
+      }
+      const monthly = summary?.monthly_counts || {};
+      const { byMonth: cachedByMonth } = countCacheByMonth();
+
+      const years = Array.from(
+        new Set([...Object.keys(monthly), ...Object.keys(cachedByMonth)]),
+      ).sort();
+      let trueTotal = 0;
+      let cachedTotal = 0;
+      const rows = years.map((year) => {
+        const trueYear = Object.values(monthly[year] || {}).reduce((a: number, b: any) => a + Number(b), 0);
+        const cachedYear = Object.values(cachedByMonth[year] || {}).reduce((a: number, b: number) => a + b, 0);
+        trueTotal += trueYear;
+        cachedTotal += cachedYear;
+        return { year, true: trueYear, cached: cachedYear, missing: Math.max(0, trueYear - cachedYear) };
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify({ trueTotal, cachedTotal, missing: Math.max(0, trueTotal - cachedTotal), years: rows }, null, 2));
+        return;
+      }
+      const n = (v: number) => v.toLocaleString('en-US');
+      console.log(`True total: ${n(trueTotal)}   Cached: ${n(cachedTotal)} (${trueTotal ? Math.round((cachedTotal / trueTotal) * 100) : 0}%)   Missing: ${n(Math.max(0, trueTotal - cachedTotal))}`);
+      console.log('');
+      console.log('year |     true |   cached | cov% |  missing');
+      for (const r of rows) {
+        const cov = r.true ? `${Math.round((r.cached / r.true) * 100)}%` : '-';
+        console.log(
+          `${r.year} | ${String(r.true).padStart(8)} | ${String(r.cached).padStart(8)} | ${cov.padStart(4)} | ${String(r.missing).padStart(8)}`,
+        );
+      }
     });
 
   // `stats size`: total the file_size of cached images. file_size is not in the

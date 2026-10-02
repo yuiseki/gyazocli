@@ -42,6 +42,7 @@ export function registerSyncCommand(program: Command): void {
     .option('--days <number>', 'number of days to sync (used when --date is omitted)')
     .option('--date <yyyy|yyyy-mm|yyyy-mm-dd>', 'sync only this date/month/year range')
     .option('--max-pages <number>', 'max pages to fetch', '10')
+    .option('--all-pages', 'fetch every page (for a bounded query like month:YYYY-MM)')
     .option('--query <query>', 'fill the cache from a search instead of the listing')
     .option('--refresh', 'fetch every capture again, even one already cached')
     .option('--continue', 'resume the last walk of this query instead of starting at the top')
@@ -101,7 +102,12 @@ export function registerSyncCommand(program: Command): void {
         process.exit(1);
       }
 
-      const maxPages = parsePositiveIntegerOption(options.maxPages, '--max-pages');
+      // --all-pages lifts the cap: the walk then runs until a page comes back
+      // empty. Safe for a bounded query (month:YYYY-MM); an unbounded one would
+      // try to page the whole account.
+      const maxPages = options.allPages
+        ? Number.MAX_SAFE_INTEGER
+        : parsePositiveIntegerOption(options.maxPages, '--max-pages');
 
       /** The day part of an instant, in local time, as the operators want it. */
       const dayOf = (date: Date): string => {
