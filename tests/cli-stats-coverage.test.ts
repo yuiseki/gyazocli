@@ -11,10 +11,10 @@ function cookieFile(dir: string): string {
 
 test('stats coverage compares the true counts to the cache by year', async () => {
   const cacheDir = createTempCacheDir();
-  // Cache: 2 images in 2020, 1 in 2024.
-  writeImageCache(cacheDir, 'a'.padEnd(32, '0'), { image_id: 'a'.padEnd(32, '0'), created_at: '2020-07-01T00:00:00.000Z' });
+  // Cache: 2 images in 2020 (one with a size), 1 in 2024 (with a size).
+  writeImageCache(cacheDir, 'a'.padEnd(32, '0'), { image_id: 'a'.padEnd(32, '0'), created_at: '2020-07-01T00:00:00.000Z', file_size: 1000 });
   writeImageCache(cacheDir, 'b'.padEnd(32, '0'), { image_id: 'b'.padEnd(32, '0'), created_at: '2020-08-01T00:00:00.000Z' });
-  writeImageCache(cacheDir, 'c'.padEnd(32, '0'), { image_id: 'c'.padEnd(32, '0'), created_at: '2024-01-01T00:00:00.000Z' });
+  writeImageCache(cacheDir, 'c'.padEnd(32, '0'), { image_id: 'c'.padEnd(32, '0'), created_at: '2024-01-01T00:00:00.000Z', file_size: 2000 });
 
   const stub = await startStubServer((req, res) => {
     const url = new URL(req.url || '', 'http://127.0.0.1');
@@ -34,11 +34,12 @@ test('stats coverage compares the true counts to the cache by year', async () =>
     const parsed = JSON.parse(result.stdout);
     expect(parsed.trueTotal).toBe(16); // 10 + 5 + 1
     expect(parsed.cachedTotal).toBe(3);
+    expect(parsed.sizedTotal).toBe(2); // a (2020) and c (2024) have file_size
     expect(parsed.missing).toBe(13);
     const y2020 = parsed.years.find((r: any) => r.year === '2020');
-    expect(y2020).toEqual({ year: '2020', true: 15, cached: 2, missing: 13 });
+    expect(y2020).toEqual({ year: '2020', true: 15, cached: 2, withSize: 1, missing: 13 });
     const y2024 = parsed.years.find((r: any) => r.year === '2024');
-    expect(y2024).toEqual({ year: '2024', true: 1, cached: 1, missing: 0 });
+    expect(y2024).toEqual({ year: '2024', true: 1, cached: 1, withSize: 1, missing: 0 });
   } finally {
     await stub.close();
   }

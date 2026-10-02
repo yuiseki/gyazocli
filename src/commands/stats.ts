@@ -229,33 +229,47 @@ export function registerStatsCommand(program: Command): void {
         process.exit(1);
       }
       const monthly = summary?.monthly_counts || {};
-      const { byMonth: cachedByMonth } = countCacheByMonth();
+      const { byMonth: cachedByMonth, sizedByMonth } = countCacheByMonth();
 
       const years = Array.from(
         new Set([...Object.keys(monthly), ...Object.keys(cachedByMonth)]),
       ).sort();
       let trueTotal = 0;
       let cachedTotal = 0;
+      let sizedTotal = 0;
+      const sumYear = (byMonth: Record<string, Record<string, number>>, year: string) =>
+        Object.values(byMonth[year] || {}).reduce((a: number, b: number) => a + Number(b), 0);
       const rows = years.map((year) => {
-        const trueYear = Object.values(monthly[year] || {}).reduce((a: number, b: any) => a + Number(b), 0);
-        const cachedYear = Object.values(cachedByMonth[year] || {}).reduce((a: number, b: number) => a + b, 0);
+        const trueYear = sumYear(monthly as any, year);
+        const cachedYear = sumYear(cachedByMonth, year);
+        const sizedYear = sumYear(sizedByMonth, year);
         trueTotal += trueYear;
         cachedTotal += cachedYear;
-        return { year, true: trueYear, cached: cachedYear, missing: Math.max(0, trueYear - cachedYear) };
+        sizedTotal += sizedYear;
+        return {
+          year,
+          true: trueYear,
+          cached: cachedYear,
+          withSize: sizedYear,
+          missing: Math.max(0, trueYear - cachedYear),
+        };
       });
 
       if (options.json) {
-        console.log(JSON.stringify({ trueTotal, cachedTotal, missing: Math.max(0, trueTotal - cachedTotal), years: rows }, null, 2));
+        console.log(JSON.stringify({ trueTotal, cachedTotal, sizedTotal, missing: Math.max(0, trueTotal - cachedTotal), years: rows }, null, 2));
         return;
       }
       const n = (v: number) => v.toLocaleString('en-US');
-      console.log(`True total: ${n(trueTotal)}   Cached: ${n(cachedTotal)} (${trueTotal ? Math.round((cachedTotal / trueTotal) * 100) : 0}%)   Missing: ${n(Math.max(0, trueTotal - cachedTotal))}`);
+      console.log(
+        `True total: ${n(trueTotal)}   Cached: ${n(cachedTotal)} (${trueTotal ? Math.round((cachedTotal / trueTotal) * 100) : 0}%)   ` +
+          `With size: ${n(sizedTotal)}   Missing: ${n(Math.max(0, trueTotal - cachedTotal))}`,
+      );
       console.log('');
-      console.log('year |     true |   cached | cov% |  missing');
+      console.log('year |     true |   cached | cov% | withSize |  missing');
       for (const r of rows) {
         const cov = r.true ? `${Math.round((r.cached / r.true) * 100)}%` : '-';
         console.log(
-          `${r.year} | ${String(r.true).padStart(8)} | ${String(r.cached).padStart(8)} | ${cov.padStart(4)} | ${String(r.missing).padStart(8)}`,
+          `${r.year} | ${String(r.true).padStart(8)} | ${String(r.cached).padStart(8)} | ${cov.padStart(4)} | ${String(r.withSize).padStart(8)} | ${String(r.missing).padStart(8)}`,
         );
       }
     });

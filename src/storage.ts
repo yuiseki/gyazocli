@@ -35,24 +35,35 @@ function countJsonFiles(dir: string): number {
  * cache coverage can be compared against the account's true monthly counts.
  * Shape mirrors images_summary: { [year]: { [month]: n } }. Reads every record.
  */
-export function countCacheByMonth(): { byMonth: Record<string, Record<string, number>>; total: number } {
+export function countCacheByMonth(): {
+  byMonth: Record<string, Record<string, number>>;
+  sizedByMonth: Record<string, Record<string, number>>;
+  total: number;
+  sizedTotal: number;
+} {
   const byMonth: Record<string, Record<string, number>> = {};
+  const sizedByMonth: Record<string, Record<string, number>> = {};
   let total = 0;
+  let sizedTotal = 0;
   for (const file of iterCachedImagePaths()) {
-    let createdAt = '';
+    let record: any;
     try {
-      createdAt = JSON.parse(fs.readFileSync(file, 'utf-8'))?.created_at || '';
+      record = JSON.parse(fs.readFileSync(file, 'utf-8'));
     } catch {
       continue;
     }
-    const m = /^(\d{4})-(\d{2})/.exec(createdAt);
+    const m = /^(\d{4})-(\d{2})/.exec(record?.created_at || '');
     if (!m) continue;
     const year = m[1];
     const month = String(Number(m[2])); // '04' -> '4', to match images_summary
     (byMonth[year] ||= {})[month] = (byMonth[year][month] || 0) + 1;
     total += 1;
+    if (typeof record?.file_size === 'number' && record.file_size > 0) {
+      (sizedByMonth[year] ||= {})[month] = (sizedByMonth[year][month] || 0) + 1;
+      sizedTotal += 1;
+    }
   }
-  return { byMonth, total };
+  return { byMonth, sizedByMonth, total, sizedTotal };
 }
 
 export interface CacheCounts {
