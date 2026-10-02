@@ -30,6 +30,16 @@ function countJsonFiles(dir: string): number {
   return total;
 }
 
+// These pull two top-level scalars out of a cached record without building the
+// whole object. On ~100k records a full JSON.parse of each (with all their
+// metadata/exif/thumb URLs) costs ~20s; extracting just these two fields from
+// the text is about half that. The keys are top-level and unique in a record
+// (no nested created_at; exif has captured_at/updated_at, not created_at), so a
+// regex anchored to the quoted key is safe here. file_size is a bare number or
+// null; a null simply does not match.
+const CREATED_AT_RE = /"created_at"\s*:\s*"(\d{4})-(\d{2})/;
+const FILE_SIZE_RE = /"file_size"\s*:\s*(\d+)/;
+
 /**
  * How many cached images fall in each year and month, by their created_at, so
  * cache coverage can be compared against the account's true monthly counts.
@@ -46,19 +56,20 @@ export function countCacheByMonth(): {
   let total = 0;
   let sizedTotal = 0;
   for (const file of iterCachedImagePaths()) {
-    let record: any;
+    let text: string;
     try {
-      record = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      text = fs.readFileSync(file, 'utf-8');
     } catch {
       continue;
     }
-    const m = /^(\d{4})-(\d{2})/.exec(record?.created_at || '');
+    const m = CREATED_AT_RE.exec(text);
     if (!m) continue;
     const year = m[1];
     const month = String(Number(m[2])); // '04' -> '4', to match images_summary
     (byMonth[year] ||= {})[month] = (byMonth[year][month] || 0) + 1;
     total += 1;
-    if (typeof record?.file_size === 'number' && record.file_size > 0) {
+    const sizeMatch = FILE_SIZE_RE.exec(text);
+    if (sizeMatch && Number(sizeMatch[1]) > 0) {
       (sizedByMonth[year] ||= {})[month] = (sizedByMonth[year][month] || 0) + 1;
       sizedTotal += 1;
     }
@@ -107,14 +118,16 @@ export function sumCachedFileSizes(): FileSizeSummary {
   let totalBytes = 0;
   for (const file of iterCachedImagePaths()) {
     images += 1;
+    let text: string;
     try {
-      const record = JSON.parse(fs.readFileSync(file, 'utf-8'));
-      if (typeof record?.file_size === 'number') {
-        withSize += 1;
-        totalBytes += record.file_size;
-      }
+      text = fs.readFileSync(file, 'utf-8');
     } catch {
-      // A half-written or corrupt record just does not count toward the size.
+      continue; // A half-written or unreadable record does not count.
+    }
+    const sizeMatch = FILE_SIZE_RE.exec(text);
+    if (sizeMatch) {
+      withSize += 1;
+      totalBytes += Number(sizeMatch[1]);
     }
   }
   return { images, withSize, totalBytes };
