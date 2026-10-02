@@ -1027,9 +1027,10 @@ test('sync does not fetch a capture it already has', async () => {
   writeImageCache(cacheDir, id, {
     ...lean,
     ocr: null,
-    // original_url is on every record the API returns; it is how sync knows the
+    // desc/links/user live under metadata only in what the API returns (the web
+    // JSON carries them at top level), so their presence is how sync knows the
     // API detail is already in hand.
-    metadata: { app: 'Gyazo Android', original_url: null, ocr: { locale: 'und', description: 'すでに取得済み' } },
+    metadata: { app: 'Gyazo Android', desc: '', links: [], user: { name: 'y' }, ocr: { locale: 'und', description: 'すでに取得済み' } },
   });
 
   const stub = await startStubServer((req, res) => {

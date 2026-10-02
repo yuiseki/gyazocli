@@ -198,13 +198,13 @@ export function registerSyncCommand(program: Command): void {
           // already in the cache, not by a marker -- so a record cached by an
           // earlier API-only sync is recognised as API-complete and not fetched
           // again. web contributes file_size; api contributes metadata the web
-          // JSON never carries, of which original_url is present on every API
-          // record (and on no web one). The passes merge, never clobber: this is
-          // the "web first for the whole picture, api later to fill in
-          // addresses/domains" workflow.
+          // JSON never carries: desc, links and user (original_url is NOT a
+          // signal -- the web JSON carries it too once the user has edited the
+          // capture). The passes merge, never clobber.
           const cached = loadImageCache(img.image_id);
+          const cachedMeta = cached?.metadata || {};
           const haveWeb = typeof cached?.file_size === 'number';
-          const haveApi = cached?.metadata?.original_url !== undefined;
+          const haveApi = 'desc' in cachedMeta || 'links' in cachedMeta || 'user' in cachedMeta;
           const wantWeb = source === 'web' || source === 'web-and-api';
           const wantApi = source === 'api' || source === 'web-and-api';
           const needWeb = wantWeb && (options.refresh || !haveWeb);

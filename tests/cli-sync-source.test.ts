@@ -40,6 +40,11 @@ function sourceStub() {
         metadata: {
           app: 'photo-gyazo',
           url: 'https://example.com/post',
+          // desc/links/user are what the API puts under metadata and the web JSON
+          // never does (it carries them at top level) -- the api-completeness signal.
+          desc: '',
+          links: [],
+          user: { name: 'yuiseki' },
           original_url: 'https://example.com/post',
           exif_address: { ja: { address: '東京都' } },
         },
@@ -76,8 +81,10 @@ test('sync --web stores file_size and does not call the OAuth API', async () => 
     expect(calls.api).toBe(0);
     const rec = readCached(cacheDir, ID);
     expect(rec.file_size).toBe(12345);
-    // No API fields yet: original_url is the signal api still owes this record.
-    expect(rec.metadata.original_url).toBeUndefined();
+    // No API fields yet: the web JSON never puts desc/links/user under metadata,
+    // which is how api-completeness is judged.
+    expect('user' in (rec.metadata || {})).toBe(false);
+    expect('desc' in (rec.metadata || {})).toBe(false);
   } finally {
     await stub.close();
   }
@@ -97,7 +104,7 @@ test('sync --api stores the API detail and marks api_synced_at, no web call', as
     expect(calls.web).toBe(0);
     const rec = readCached(cacheDir, ID);
     expect(rec.metadata.exif_address.ja.address).toBe('東京都');
-    expect(rec.metadata.original_url).toBe('https://example.com/post');
+    expect(rec.metadata.user).toEqual({ name: 'yuiseki' }); // api-only-at-path signal
     expect(rec.file_size).toBeUndefined();
   } finally {
     await stub.close();
@@ -125,8 +132,8 @@ test('web first then api fills in, merging without clobbering (the staged workfl
     expect(rec.file_size).toBe(12345); // kept from the web pass
     expect(rec.metadata.exif_address.ja.address).toBe('東京都'); // added by the api pass
     expect(rec.metadata.hashtags).toEqual(['x']); // web-only metadata survived
-    expect(rec.metadata.url).toBe('https://example.com/post'); // api-only metadata present
-    expect(rec.metadata.original_url).toBe('https://example.com/post'); // api completeness signal
+    expect(rec.metadata.url).toBe('https://example.com/post'); // api metadata present
+    expect(rec.metadata.user).toEqual({ name: 'yuiseki' }); // api completeness signal
   } finally {
     await stub.close();
   }
@@ -148,13 +155,13 @@ test('a second api pass skips an already api-synced image', async () => {
 });
 
 test('a record cached by an earlier api-only sync is not re-fetched by --api', async () => {
-  // Pre-existing API record: has metadata.original_url, no file_size, no marker.
+  // Pre-existing API record: has the api-only metadata (desc/links/user), no file_size.
   const cacheDir = createTempCacheDir();
   const dir = path.join(cacheDir, 'images', ID[0], ID[1]);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(
     path.join(dir, `${ID}.json`),
-    JSON.stringify({ image_id: ID, created_at: '2026-08-30T00:00:00.000Z', metadata: { app: 'a', original_url: null } }),
+    JSON.stringify({ image_id: ID, created_at: '2026-08-30T00:00:00.000Z', metadata: { app: 'a', desc: '', links: [], user: { name: 'a' } } }),
   );
   const { handler, calls } = sourceStub();
   const stub = await startStubServer(handler);
