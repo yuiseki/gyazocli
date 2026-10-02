@@ -112,6 +112,7 @@ gyazo collection <collection_id>
 gyazo collection https://gyazo.com/collections/<id>
 gyazo collection <id> --sort captured   # added | created | captured
 gyazo collection <id> --anonymous       # read a public one without the token
+gyazo collection <id> --ids             # just the image IDs, one per line
 ```
 
 A collection ID and an image ID are both 32 hex characters and cannot be told

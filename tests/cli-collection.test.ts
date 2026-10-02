@@ -293,3 +293,68 @@ test('collection explains that a 404 may mean the collection is private', async 
     404,
   );
 });
+
+test('collection --ids prints every image id, one per line, across pages', async () => {
+  const cacheDir = createTempCacheDir();
+  const total = 150;
+  const all = Array.from({ length: total }, (_, i) => ({
+    image_id: `aa${String(i).padStart(30, '0')}`,
+    created_at: '2026-08-30T00:00:00.000Z',
+    exif_captured_at: '2026-08-30T00:00:00.000Z',
+  }));
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    if (url.pathname.endsWith('/images')) {
+      const page = Number(url.searchParams.get('page') || '1');
+      const per = Number(url.searchParams.get('per') || '100');
+      res.end(JSON.stringify(all.slice((page - 1) * per, page * per)));
+      return;
+    }
+    if (url.pathname.startsWith('/api/v2/collections/')) {
+      res.end(JSON.stringify({ id: COLLECTION_ID, name: 'c', total_image_count: total }));
+      return;
+    }
+    res.end(JSON.stringify({ id: COLLECTION_ID, images: [] }));
+  });
+  try {
+    const result = await runCli(cacheDir, ['col', COLLECTION_ID, '--ids'], { apiOrigin: stub.origin });
+    expect(result.status).toBe(0);
+    const lines = result.stdout.split('\n').filter(Boolean);
+    expect(lines).toHaveLength(total);
+    expect(lines[0]).toBe(all[0].image_id);
+    expect(lines[total - 1]).toBe(all[total - 1].image_id);
+    // Nothing but ids: no markdown headings.
+    expect(result.stdout).not.toMatch(/^#/m);
+    // It walked two pages.
+    const pages = stub.requests
+      .filter((r) => r.url.includes('/images'))
+      .map((r) => new URL(r.url, 'http://127.0.0.1').searchParams.get('page'));
+    expect(pages).toEqual(['1', '2']);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('collection --ids feeds restore (bare ids are accepted)', async () => {
+  const cacheDir = createTempCacheDir();
+  const all = [{ image_id: 'aa'.padEnd(32, '0'), created_at: '2026-08-30T00:00:00.000Z' }];
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    if (url.pathname.endsWith('/images')) {
+      const page = Number(url.searchParams.get('page') || '1');
+      res.end(JSON.stringify(page === 1 ? all : []));
+      return;
+    }
+    res.end(JSON.stringify({ id: COLLECTION_ID, total_image_count: 1 }));
+  });
+  try {
+    const result = await runCli(cacheDir, ['col', COLLECTION_ID, '--ids'], { apiOrigin: stub.origin });
+    const id = result.stdout.trim();
+    // A bare id on its own line is what restore/touch accept via normalizeImageId.
+    expect(id).toMatch(/^[0-9a-f]{32}$/);
+  } finally {
+    await stub.close();
+  }
+});

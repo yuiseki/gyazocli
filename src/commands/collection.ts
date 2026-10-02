@@ -7,6 +7,7 @@ import {
   requireCollectionId,
   parseCollectionSort,
   readCollection,
+  collectAllImageIds,
   printCollectionMarkdown,
 } from '../services/collections';
 
@@ -18,6 +19,7 @@ export function registerCollectionCommand(program: Command): void {
     .option('-j, --json', 'output as JSON')
     .option('-A, --anonymous', 'read without an access token, even when one is configured')
     .option('--sort <added|created|captured>', 'image order (default: added)')
+    .option('--ids', 'print just the image IDs, one per line (pipes into restore)')
     .action(async (collectionIdInput, options) => {
       const collectionId = requireCollectionId(collectionIdInput);
       const sort = parseCollectionSort(options.sort);
@@ -28,6 +30,14 @@ export function registerCollectionCommand(program: Command): void {
       }
 
       try {
+        // Just the IDs, every page of them: a collection curated to hold what
+        // is safe to publish can be piped straight into `gyazo restore`.
+        if (options.ids) {
+          const { ids } = await collectAllImageIds(collectionId, { sort });
+          for (const id of ids) console.log(id);
+          return;
+        }
+
         const { collection, images } = await readCollection(collectionId, {
           anonymous: Boolean(options.anonymous),
           sort,

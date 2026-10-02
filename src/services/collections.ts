@@ -180,6 +180,47 @@ export async function readCollection(
 }
 
 /**
+ * Every image ID in a collection, paged through the API endpoint. The web
+ * endpoint caps at 100 and cannot page, so this needs a token; a collection
+ * curated to hold exactly what is safe to publish can then be handed to
+ * `gyazo restore` in full.
+ */
+export async function collectAllImageIds(
+  collectionId: string,
+  options: { sort?: CollectionSort; maxPages?: number } = {},
+): Promise<{ ids: string[]; totalImageCount?: number }> {
+  const maxPages = options.maxPages && options.maxPages > 0 ? options.maxPages : 1000;
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  let totalImageCount: number | undefined;
+
+  for (let page = 1; page <= maxPages; page++) {
+    const result = await readCollection(collectionId, {
+      sort: options.sort,
+      paginated: true,
+      page,
+      per: 100,
+    });
+    totalImageCount = result.totalImageCount;
+    if (result.images.length === 0) break;
+
+    for (const image of result.images) {
+      const id = image?.image_id;
+      if (typeof id === 'string' && !seen.has(id)) {
+        seen.add(id);
+        ids.push(id);
+      }
+    }
+
+    // Stop when the whole collection is in hand, or a short page ends it.
+    if (typeof totalImageCount === 'number' && ids.length >= totalImageCount) break;
+    if (result.images.length < 100) break;
+  }
+
+  return { ids, totalImageCount };
+}
+
+/**
  * Collections whose name contains the query, or all of them when there is no
  * query. Matching is case-insensitive and ignores surrounding whitespace,
  * because a name people say out loud rarely matches one stored with emoji and
