@@ -138,45 +138,58 @@ export async function readCollection(
   const per = options.per && options.per > 0 ? Math.min(options.per, 100) : 100;
   const useApi = Boolean(options.paginated) && !options.anonymous && Boolean(resolveAccessToken());
 
-  if (useApi) {
-    const [collection, images] = await Promise.all([
-      getCollectionDetail(collectionId),
-      listCollectionImages(collectionId, page, per),
-    ]);
+  // The public /collections/<id>.json endpoint: no paging (first 100), but it
+  // keeps working when the API endpoint does not, as during the incident
+  // recovery where that one returns 403.
+  const readWeb = async (): Promise<ReadCollectionResult> => {
+    const collection = await getCollection(collectionId, {
+      anonymous: Boolean(options.anonymous),
+    });
+    const images = sortCollectionImages(
+      Array.isArray(collection?.images) ? collection.images : [],
+      sort,
+    );
     const total = collection?.total_image_count;
-    const sorted = sortCollectionImages(images, sort);
     return {
       collection,
-      images: sorted,
-      page,
-      per,
-      returnedImageCount: sorted.length,
+      images,
+      page: 1,
+      per: images.length,
+      returnedImageCount: images.length,
       totalImageCount: typeof total === 'number' ? total : undefined,
-      truncated: typeof total === 'number' ? page * per < total : false,
-      source: 'api',
+      truncated: typeof total === 'number' ? images.length < total : false,
+      source: 'web',
     };
+  };
+
+  if (useApi) {
+    try {
+      const [collection, images] = await Promise.all([
+        getCollectionDetail(collectionId),
+        listCollectionImages(collectionId, page, per),
+      ]);
+      const total = collection?.total_image_count;
+      const sorted = sortCollectionImages(images, sort);
+      return {
+        collection,
+        images: sorted,
+        page,
+        per,
+        returnedImageCount: sorted.length,
+        totalImageCount: typeof total === 'number' ? total : undefined,
+        truncated: typeof total === 'number' ? page * per < total : false,
+        source: 'api',
+      };
+    } catch (error: any) {
+      // A 404 means the collection is not there or not readable; let that
+      // surface. Anything else (403 during the incident, a 5xx) falls back to
+      // the web endpoint, which may still answer.
+      if (error?.response?.status === 404) throw error;
+      return readWeb();
+    }
   }
 
-  // Only --anonymous drops the token here: a private collection of your own
-  // reads fine through the web endpoint with it.
-  const collection = await getCollection(collectionId, {
-    anonymous: Boolean(options.anonymous),
-  });
-  const images = sortCollectionImages(
-    Array.isArray(collection?.images) ? collection.images : [],
-    sort,
-  );
-  const total = collection?.total_image_count;
-  return {
-    collection,
-    images,
-    page: 1,
-    per: images.length,
-    returnedImageCount: images.length,
-    totalImageCount: typeof total === 'number' ? total : undefined,
-    truncated: typeof total === 'number' ? images.length < total : false,
-    source: 'web',
-  };
+  return readWeb();
 }
 
 /**
@@ -212,6 +225,8 @@ export async function collectAllImageIds(
       }
     }
 
+    // The web fallback cannot page, so one read of it is all there is.
+    if (result.source === 'web') break;
     // Stop when the whole collection is in hand, or a short page ends it.
     if (typeof totalImageCount === 'number' && ids.length >= totalImageCount) break;
     if (result.images.length < 100) break;

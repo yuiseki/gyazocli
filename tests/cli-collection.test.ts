@@ -358,3 +358,42 @@ test('collection --ids feeds restore (bare ids are accepted)', async () => {
     await stub.close();
   }
 });
+
+test('collection --ids falls back to the web endpoint when the API 403s', async () => {
+  const cacheDir = createTempCacheDir();
+  const webImages = Array.from({ length: 3 }, (_, i) => ({
+    image_id: `bb${String(i).padStart(30, '0')}`,
+    created_at: '2026-08-30T00:00:00.000Z',
+  }));
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    // The API path is forbidden right now.
+    if (url.pathname.startsWith('/api/v2/collections/')) {
+      res.writeHead(403, { 'content-type': 'application/json' });
+      res.end('{"message":"forbidden"}');
+      return;
+    }
+    // The public web endpoint still answers.
+    if (url.pathname === `/collections/${COLLECTION_ID}.json`) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ id: COLLECTION_ID, total_image_count: 3, images: webImages }));
+      return;
+    }
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end('{}');
+  });
+  try {
+    const result = await runCli(cacheDir, ['col', COLLECTION_ID, '--ids'], {
+      apiOrigin: stub.origin,
+      webOrigin: stub.origin,
+    });
+    expect(result.status).toBe(0);
+    const lines = result.stdout.split('\n').filter(Boolean);
+    expect(lines).toEqual(webImages.map((i) => i.image_id));
+    // It did not loop the web endpoint, which cannot page.
+    const webHits = stub.requests.filter((r) => r.url.includes(`/collections/${COLLECTION_ID}.json`));
+    expect(webHits.length).toBe(1);
+  } finally {
+    await stub.close();
+  }
+});
