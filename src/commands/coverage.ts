@@ -30,10 +30,14 @@ export function registerCoverageCommand(program: Command): void {
     .command('coverage')
     .description("Cache coverage against the account's true counts (needs cookies)")
     .option('--month', 'break the table down by month instead of by year')
+    .option('--year <yyyy>', 'show just this year, broken down by month')
     .option('--incomplete', 'show only rows still missing images')
     .option('--cookies <path>', 'gyazo.com cookies')
     .option('-j, --json', 'output as JSON')
     .action(async (options) => {
+      // --year narrows to one year and is month-level by nature.
+      const yearFilter = options.year ? String(options.year) : null;
+      const byMonthView = Boolean(options.month || yearFilter);
       const cookieHeader = loadCookieHeader(options.cookies);
       if (!cookieHeader) {
         console.error('Error: coverage needs gyazo.com cookies.');
@@ -57,7 +61,8 @@ export function registerCoverageCommand(program: Command): void {
       let cachedTotal = 0;
       let sizedTotal = 0;
       for (const year of years) {
-        if (options.month) {
+        if (yearFilter && year !== yearFilter) continue;
+        if (byMonthView) {
           const months = Array.from(
             new Set([
               ...Object.keys(monthly[year] || {}),
@@ -121,7 +126,7 @@ export function registerCoverageCommand(program: Command): void {
           `Missing: ${n(Math.max(0, trueTotal - cachedTotal))}`,
       );
       console.log('');
-      const label = options.month ? 'month  ' : 'year';
+      const label = byMonthView ? 'month  ' : 'year';
       console.log(`${label} |     true |   cached | cov% |  missing | withSize | cov% |  missing`);
       for (const r of shown) {
         console.log(

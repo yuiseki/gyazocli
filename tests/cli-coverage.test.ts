@@ -63,6 +63,22 @@ test('coverage --month breaks it down by month', async () => {
   }
 });
 
+test('coverage --year narrows to that year and breaks it down by month', async () => {
+  const cacheDir = createTempCacheDir();
+  writeImageCache(cacheDir, 'a'.padEnd(32, '0'), { image_id: 'a'.padEnd(32, '0'), created_at: '2020-07-01T00:00:00.000Z' });
+  const stub = await summaryStub();
+  try {
+    const result = await runCli(cacheDir, ['coverage', '--year', '2020', '--json'], { webOrigin: stub.origin, cookieFile: cookieFile(cacheDir) });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    const keys = parsed.rows.map((r: any) => r.key);
+    expect(keys).toEqual(['2020-07', '2020-08']); // only 2020, by month; 2024 excluded
+    expect(parsed.trueTotal).toBe(15); // only 2020 counts toward the totals
+  } finally {
+    await stub.close();
+  }
+});
+
 test('coverage --month --incomplete hides fully-cached months', async () => {
   const cacheDir = createTempCacheDir();
   // 2024-01 fully cached (true 1, cached 1); 2020 months not.
