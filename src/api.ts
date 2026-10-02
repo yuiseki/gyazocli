@@ -49,6 +49,7 @@ const apiUsersMeUrl = () => `${apiOrigin()}/api/users/me`;
 const apiUploadUrl = () => `${uploadOrigin()}/api/upload`;
 const webCollectionUrl = (id: string) => `${webOrigin()}/collections/${id}.json`;
 const webBoardImagesUrl = (id: string) => `${webOrigin()}/api/internal/boards/${id}/images`;
+const webImageJsonUrl = (id: string) => `${webOrigin()}/${id}.json`;
 const apiCollectionsUrl = () => `${apiOrigin()}/api/v2/collections`;
 const apiCollectionUrl = (id: string) => `${apiCollectionsUrl()}/${id}`;
 const apiCollectionImagesUrl = (id: string) => `${apiCollectionUrl(id)}/images`;
@@ -248,6 +249,20 @@ export async function listBoardImages(
   );
   if (Array.isArray(data)) return data;
   return Array.isArray(data?.images) ? data.images : [];
+}
+
+/**
+ * A capture's record through the web app's per-image JSON (`gyazo.com/<id>.json`).
+ *
+ * Unlike the public API detail (`/api/images/<id>`), this carries `file_size` in
+ * bytes, which is the only way to total how much space captures take. It answers
+ * even without a cookie for a public capture; a cookie lets a withheld one
+ * through too.
+ */
+export async function fetchImageWebJson(imageId: string, cookieHeader?: string): Promise<any> {
+  const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' };
+  if (cookieHeader) headers.Cookie = cookieHeader;
+  return requestWithRetry(webImageJsonUrl(imageId), {}, headers);
 }
 
 export type RenditionFormat = 'webp' | 'jpeg';

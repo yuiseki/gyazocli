@@ -40,6 +40,75 @@ export interface CacheCounts {
   cacheDir: string;
 }
 
+/** Every cached image detail file path, walking the images/ tree. */
+function* iterCachedImagePaths(): Generator<string> {
+  const dir = path.join(getCacheDir(), 'images');
+  if (!fs.existsSync(dir)) return;
+  const stack = [dir];
+  while (stack.length) {
+    const current = stack.pop() as string;
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) stack.push(full);
+      else if (entry.isFile() && entry.name.endsWith('.json')) yield full;
+    }
+  }
+}
+
+export interface FileSizeSummary {
+  /** Cached image records in total. */
+  images: number;
+  /** Of those, how many carry a numeric file_size. */
+  withSize: number;
+  /** Sum of the known file_size values, in bytes. */
+  totalBytes: number;
+}
+
+/** Total the file_size of cached images. Reads each record; fetches nothing. */
+export function sumCachedFileSizes(): FileSizeSummary {
+  let images = 0;
+  let withSize = 0;
+  let totalBytes = 0;
+  for (const file of iterCachedImagePaths()) {
+    images += 1;
+    try {
+      const record = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      if (typeof record?.file_size === 'number') {
+        withSize += 1;
+        totalBytes += record.file_size;
+      }
+    } catch {
+      // A half-written or corrupt record just does not count toward the size.
+    }
+  }
+  return { images, withSize, totalBytes };
+}
+
+/** Image ids whose cached record has no numeric file_size yet, up to `limit`. */
+export function cachedImageIdsMissingFileSize(limit?: number): string[] {
+  const ids: string[] = [];
+  for (const file of iterCachedImagePaths()) {
+    if (limit && ids.length >= limit) break;
+    try {
+      const record = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      if (typeof record?.file_size !== 'number') {
+        const id = record?.image_id || path.basename(file, '.json');
+        if (id) ids.push(id);
+      }
+    } catch {
+      // Skip unreadable records; a re-fetch would overwrite them anyway.
+    }
+  }
+  return ids;
+}
+
+/** Merge a fetched file_size into a cached record, without touching the rest. */
+export function setCachedFileSize(imageId: string, fileSize: number): void {
+  const record = loadImageCache(imageId) || { image_id: imageId };
+  record.file_size = fileSize;
+  saveImageCache(imageId, record);
+}
+
 /** How much is in the local cache, by kind. Counts files; reads none of them. */
 export function countCache(): CacheCounts {
   const cacheDir = getCacheDir();
