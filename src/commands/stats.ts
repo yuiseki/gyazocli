@@ -11,8 +11,49 @@ import {
   countCache,
   sumCachedFileSizes,
   cachedImageIdsMissingFileSize,
+  sampleCachedImageIds,
   setCachedFileSize,
+  loadImageCache,
 } from '../storage';
+
+/**
+ * Estimate a population total from a simple random sample of its members, with a
+ * 95% confidence interval. Uses the finite population correction, since the
+ * sample is drawn without replacement from a known, bounded population.
+ */
+function estimateTotalFromSample(
+  sampleSizes: number[],
+  populationN: number,
+): {
+  sampleN: number;
+  meanBytes: number;
+  stdevBytes: number;
+  populationN: number;
+  estimateBytes: number;
+  ci95: [number, number];
+  relativeMarginPct: number;
+} {
+  const n = sampleSizes.length;
+  const mean = n > 0 ? sampleSizes.reduce((a, b) => a + b, 0) / n : 0;
+  const variance =
+    n > 1 ? sampleSizes.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1) : 0;
+  const stdev = Math.sqrt(variance);
+  const estimate = populationN * mean;
+  // SE of the total, with the finite population correction (1 - n/N).
+  const fpc = populationN > 0 ? Math.max(0, 1 - n / populationN) : 1;
+  const seTotal = populationN * (stdev / Math.sqrt(Math.max(1, n))) * Math.sqrt(fpc);
+  const margin = 1.96 * seTotal;
+  const relativeMarginPct = estimate > 0 ? (margin / estimate) * 100 : 0;
+  return {
+    sampleN: n,
+    meanBytes: mean,
+    stdevBytes: stdev,
+    populationN,
+    estimateBytes: estimate,
+    ci95: [Math.max(0, estimate - margin), estimate + margin],
+    relativeMarginPct,
+  };
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -152,9 +193,13 @@ export function registerStatsCommand(program: Command): void {
     .description("Total the file size of cached images (backfill sizes with --fetch)")
     .option('--fetch', 'fetch missing sizes from gyazo.com/<id>.json and store them')
     .option('--max <number>', 'with --fetch, cap how many to fetch this run')
+    .option('--random', 'with --fetch, sample ids at random to estimate the population total')
     .option('--cookies <path>', 'cookies, so a withheld image returns a size too')
     .option('-j, --json', 'output as JSON')
     .action(async (options) => {
+      // The population the estimate is about: every cached image.
+      const populationN = countCache().images;
+
       if (options.fetch) {
         const max = options.max
           ? parsePositiveIntegerOption(options.max, '--max')
@@ -168,15 +213,29 @@ export function registerStatsCommand(program: Command): void {
               'pass --cookies <path> or put them in ~/.config/gyazo/cookie.json.',
           );
         }
-        const missing = cachedImageIdsMissingFileSize(max);
+
+        // --random draws a uniform sample across the whole cache (for an
+        // estimate); the default walks the missing ones in order (to fill them
+        // in). A size already stored is reused, not re-fetched.
+        const targets = options.random
+          ? sampleCachedImageIds(max ?? populationN)
+          : cachedImageIdsMissingFileSize(max);
+
+        const sampleSizes: number[] = [];
         let fetched = 0;
         let failed = 0;
-        for (let i = 0; i < missing.length; i++) {
-          const id = missing[i];
+        for (let i = 0; i < targets.length; i++) {
+          const id = targets[i];
+          const known = loadImageCache(id)?.file_size;
+          if (typeof known === 'number') {
+            sampleSizes.push(known);
+            continue;
+          }
           try {
             const record = await fetchImageWebJson(id, cookieHeader);
             if (typeof record?.file_size === 'number') {
               setCachedFileSize(id, record.file_size);
+              sampleSizes.push(record.file_size);
               fetched += 1;
             } else {
               failed += 1;
@@ -185,11 +244,31 @@ export function registerStatsCommand(program: Command): void {
             failed += 1;
           }
           if ((i + 1) % 100 === 0) {
-            process.stderr.write(`\rfetched ${fetched}/${missing.length} (${failed} without a size)`);
+            process.stderr.write(`\rfetched ${fetched}/${targets.length} (${failed} without a size)`);
           }
         }
-        if (missing.length >= 100) process.stderr.write('\n');
-        console.error(`Backfilled ${fetched} size(s), ${failed} without one, of ${missing.length} missing.`);
+        if (targets.length >= 100) process.stderr.write('\n');
+        console.error(`Backfilled ${fetched} size(s), ${failed} without one, of ${targets.length} target(s).`);
+
+        if (options.random) {
+          const est = estimateTotalFromSample(sampleSizes, populationN);
+          if (options.json) {
+            console.log(JSON.stringify(est, null, 2));
+            return;
+          }
+          console.log(
+            `Sampled ${est.sampleN.toLocaleString('en-US')} of ${populationN.toLocaleString('en-US')} images at random.`,
+          );
+          console.log(
+            `Mean ${formatBytes(est.meanBytes)}/image, stdev ${formatBytes(est.stdevBytes)}.`,
+          );
+          console.log(
+            `Estimated total: ${formatBytes(est.estimateBytes)} ` +
+              `(95% CI ${formatBytes(est.ci95[0])}–${formatBytes(est.ci95[1])}, ` +
+              `±${est.relativeMarginPct.toFixed(1)}%).`,
+          );
+          return;
+        }
       }
 
       const summary = sumCachedFileSizes();

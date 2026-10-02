@@ -47,7 +47,7 @@ if a file of that name exists in the working directory.
 - `gyazo summary`: Show day-by-day weekly summary in Markdown (`##`/`###` headings, image count, apps, domains, tags, locations per day)
 - `gyazo stats`: Show weekly summary
 - `gyazo stats cached`: Show how many images are in the local cache (`-j` available). Reads no token and hits no network
-- `gyazo stats size`: Total the file size of cached images. `file_size` is not in the public API, so backfill it from the web per-image JSON with `--fetch` (`--max <n>` to cap a run, `--cookies <path>` for withheld images), then it sums instantly. `-j` available
+- `gyazo stats size`: Total the file size of cached images. `file_size` is not in the public API, so backfill it from the web per-image JSON with `--fetch` (`--max <n>` to cap a run, `--cookies <path>` for withheld images), then it sums instantly. `-j` available. Add `--random` to fetch a uniform random sample instead and estimate the population total with a 95% confidence interval (finite population correction included)
 - `gyazo upload [path]`: Upload an image (uses stdin when path is omitted). Prints the permalink URL alone; use `-j` for the full response
 - `gyazo sync`: Sync cache
 

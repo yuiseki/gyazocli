@@ -85,6 +85,45 @@ test('stats size --fetch does not store a null file_size (withheld without cooki
   }
 });
 
+test('stats size --fetch --random samples and estimates the population total', async () => {
+  const cacheDir = createTempCacheDir();
+  const population = 40;
+  for (let i = 0; i < population; i++) {
+    const id = i.toString(16).padStart(32, '0'); // unique, zero-padded 32-hex
+    writeImageCache(cacheDir, id, { image_id: id });
+  }
+  const hits: string[] = [];
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    const m = url.pathname.match(/^\/([0-9a-f]{32})\.json$/);
+    if (m) {
+      hits.push(m[1]);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      // Constant size: mean=1000, stdev=0, so the estimate is exact.
+      res.end(JSON.stringify({ image_id: m[1], file_size: 1000 }));
+      return;
+    }
+    res.writeHead(404); res.end('{}');
+  });
+  try {
+    const result = await runCli(cacheDir, ['stats', 'size', '--fetch', '--random', '--max', '10', '--json'], {
+      webOrigin: stub.origin,
+    });
+    expect(result.status).toBe(0);
+    expect(hits.length).toBe(10); // sampled exactly max
+    const est = JSON.parse(result.stdout);
+    expect(est.sampleN).toBe(10);
+    expect(est.populationN).toBe(population);
+    expect(est.meanBytes).toBe(1000);
+    expect(est.estimateBytes).toBe(population * 1000); // 40000
+    // With zero variance the interval collapses to the point estimate.
+    expect(est.relativeMarginPct).toBe(0);
+    expect(est.ci95).toEqual([population * 1000, population * 1000]);
+  } finally {
+    await stub.close();
+  }
+});
+
 test('stats size --fetch --max caps how many it fetches', async () => {
   const cacheDir = createTempCacheDir();
   for (let i = 0; i < 5; i++) {

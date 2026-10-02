@@ -102,6 +102,28 @@ export function cachedImageIdsMissingFileSize(limit?: number): string[] {
   return ids;
 }
 
+/**
+ * A uniform random sample of `n` cached image ids, by reservoir sampling over
+ * the whole images/ tree in one pass. Used to estimate a population total (e.g.
+ * cumulative file size) without fetching every record.
+ */
+export function sampleCachedImageIds(n: number): string[] {
+  if (n <= 0) return [];
+  const reservoir: string[] = [];
+  let seen = 0;
+  for (const file of iterCachedImagePaths()) {
+    const id = path.basename(file, '.json');
+    if (reservoir.length < n) {
+      reservoir.push(id);
+    } else {
+      const j = Math.floor(Math.random() * (seen + 1));
+      if (j < n) reservoir[j] = id;
+    }
+    seen += 1;
+  }
+  return reservoir;
+}
+
 /** Merge a fetched file_size into a cached record, without touching the rest. */
 export function setCachedFileSize(imageId: string, fileSize: number): void {
   const record = loadImageCache(imageId) || { image_id: imageId };
