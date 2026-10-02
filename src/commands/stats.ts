@@ -250,26 +250,38 @@ export function registerStatsCommand(program: Command): void {
           year,
           true: trueYear,
           cached: cachedYear,
-          withSize: sizedYear,
           missing: Math.max(0, trueYear - cachedYear),
+          withSize: sizedYear,
+          sizeMissing: Math.max(0, trueYear - sizedYear),
         };
       });
 
       if (options.json) {
-        console.log(JSON.stringify({ trueTotal, cachedTotal, sizedTotal, missing: Math.max(0, trueTotal - cachedTotal), years: rows }, null, 2));
+        console.log(JSON.stringify({
+          trueTotal,
+          cachedTotal,
+          sizedTotal,
+          missing: Math.max(0, trueTotal - cachedTotal),
+          sizeMissing: Math.max(0, trueTotal - sizedTotal),
+          years: rows,
+        }, null, 2));
         return;
       }
       const n = (v: number) => v.toLocaleString('en-US');
+      const pct = (part: number, whole: number) => (whole ? `${Math.round((part / whole) * 100)}%` : '-');
       console.log(
-        `True total: ${n(trueTotal)}   Cached: ${n(cachedTotal)} (${trueTotal ? Math.round((cachedTotal / trueTotal) * 100) : 0}%)   ` +
-          `With size: ${n(sizedTotal)}   Missing: ${n(Math.max(0, trueTotal - cachedTotal))}`,
+        `True total: ${n(trueTotal)}   ` +
+          `Cached: ${n(cachedTotal)} (${pct(cachedTotal, trueTotal)})   ` +
+          `With size: ${n(sizedTotal)} (${pct(sizedTotal, trueTotal)})   ` +
+          `Missing: ${n(Math.max(0, trueTotal - cachedTotal))}`,
       );
       console.log('');
-      console.log('year |     true |   cached | cov% | withSize |  missing');
+      // Two coverages against the true count: metadata (cached) and file_size.
+      console.log('year |     true |   cached | cov% |  missing | withSize | cov% |  missing');
       for (const r of rows) {
-        const cov = r.true ? `${Math.round((r.cached / r.true) * 100)}%` : '-';
         console.log(
-          `${r.year} | ${String(r.true).padStart(8)} | ${String(r.cached).padStart(8)} | ${cov.padStart(4)} | ${String(r.withSize).padStart(8)} | ${String(r.missing).padStart(8)}`,
+          `${r.year} | ${String(r.true).padStart(8)} | ${String(r.cached).padStart(8)} | ${pct(r.cached, r.true).padStart(4)} | ${String(r.missing).padStart(8)} | ` +
+            `${String(r.withSize).padStart(8)} | ${pct(r.withSize, r.true).padStart(4)} | ${String(r.sizeMissing).padStart(8)}`,
         );
       }
     });

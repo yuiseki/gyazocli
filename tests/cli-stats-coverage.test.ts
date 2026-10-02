@@ -36,10 +36,11 @@ test('stats coverage compares the true counts to the cache by year', async () =>
     expect(parsed.cachedTotal).toBe(3);
     expect(parsed.sizedTotal).toBe(2); // a (2020) and c (2024) have file_size
     expect(parsed.missing).toBe(13);
+    expect(parsed.sizeMissing).toBe(14); // 16 true - 2 sized
     const y2020 = parsed.years.find((r: any) => r.year === '2020');
-    expect(y2020).toEqual({ year: '2020', true: 15, cached: 2, withSize: 1, missing: 13 });
+    expect(y2020).toEqual({ year: '2020', true: 15, cached: 2, missing: 13, withSize: 1, sizeMissing: 14 });
     const y2024 = parsed.years.find((r: any) => r.year === '2024');
-    expect(y2024).toEqual({ year: '2024', true: 1, cached: 1, withSize: 1, missing: 0 });
+    expect(y2024).toEqual({ year: '2024', true: 1, cached: 1, missing: 0, withSize: 1, sizeMissing: 0 });
   } finally {
     await stub.close();
   }
