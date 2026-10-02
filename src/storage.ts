@@ -15,6 +15,42 @@ export function getCacheDir(): string {
   return dir;
 }
 
+/** Count every `.json` file under a directory, walking subdirectories. */
+function countJsonFiles(dir: string): number {
+  if (!fs.existsSync(dir)) return 0;
+  let total = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      total += countJsonFiles(full);
+    } else if (entry.isFile() && entry.name.endsWith('.json')) {
+      total += 1;
+    }
+  }
+  return total;
+}
+
+export interface CacheCounts {
+  /** Image detail records: the authoritative "how many images are cached". */
+  images: number;
+  /** Thinner records seen only through search, not yet fetched in full. */
+  searchImages: number;
+  /** Hourly index files (ids per hour), not image counts. */
+  hourlyFiles: number;
+  cacheDir: string;
+}
+
+/** How much is in the local cache, by kind. Counts files; reads none of them. */
+export function countCache(): CacheCounts {
+  const cacheDir = getCacheDir();
+  return {
+    images: countJsonFiles(path.join(cacheDir, 'images')),
+    searchImages: countJsonFiles(path.join(cacheDir, 'search_images')),
+    hourlyFiles: countJsonFiles(path.join(cacheDir, 'hourly')),
+    cacheDir,
+  };
+}
+
 export function getImagePath(imageId: string): string {
   const prefix1 = imageId[0] || '_';
   const prefix2 = imageId[1] || '_';

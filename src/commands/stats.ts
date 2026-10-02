@@ -5,6 +5,7 @@ import type { Command } from 'commander';
 import { ensureAccessToken } from '../credentials';
 import { buildStatsDateRange } from '../dates';
 import { parsePositiveIntegerOption } from '../options';
+import { countCache } from '../storage';
 import {
   warmDateCacheForApps,
   warmDateCacheForDomains,
@@ -27,7 +28,7 @@ import {
 } from '../services/analytics';
 
 export function registerStatsCommand(program: Command): void {
-  program
+  const stats = program
     .command('stats')
     .description('Show weekly stats summary in Markdown')
     .option('--date <yyyy|yyyy-mm|yyyy-mm-dd>', 'window end date anchor (default: yesterday)')
@@ -102,5 +103,24 @@ export function registerStatsCommand(program: Command): void {
         console.error('Error building stats:', error.message);
         process.exit(1);
       }
+    });
+
+  // `stats cached`: how many images are in the local cache. Reads no token and
+  // hits no network; it just counts files on disk.
+  stats
+    .command('cached')
+    .description('Show how many images are in the local cache')
+    .option('-j, --json', 'output as JSON')
+    .action((options) => {
+      const counts = countCache();
+      if (options.json) {
+        console.log(JSON.stringify(counts, null, 2));
+        return;
+      }
+      const n = (value: number) => value.toLocaleString('en-US');
+      console.log(`Cached images:     ${n(counts.images)}`);
+      console.log(`Search-only cache: ${n(counts.searchImages)}`);
+      console.log(`Hourly index files: ${n(counts.hourlyFiles)}`);
+      console.log(`Cache dir: ${counts.cacheDir}`);
     });
 }

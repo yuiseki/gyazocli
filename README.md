@@ -41,11 +41,12 @@ if a file of that name exists in the working directory.
 - `gyazo config get token|me`: Show saved token (masked) or `me` profile info
 - `gyazo ls` (`gyazo list`): List images (`--date`/`--today`, `--photos`, `--uploaded`, `-H` available; `--photos/--uploaded` can be combined with `--date`/`--today`)
 - `gyazo search <query>`: Search images
-- `gyazo collection <collection_id|url>` (`col`, `cols`, `collections`): Show a collection and the images in it (`--sort added|created|captured`, `-A`, `-j` available)
+- `gyazo collection <collection_id|url>` (`col`, `cols`, `collections`): Show a collection and the images in it (`--sort added|created|captured`, `-A`, `-j` available). `--ids` prints just the image IDs, one per line, to pipe into `restore`; with cookies (the default lookup or `--cookies <path>`) it reads the real IDs even for withheld images
 - `gyazo get <image_id|url>`: Show image details (`--ocr`, `--objects`, `-j` available). Accepts a bare image ID, a `https://gyazo.com/<id>` permalink, or a `https://i.gyazo.com/<id>.png` URL
 - `gyazo apps|domains|tags|locations`: Show rankings
 - `gyazo summary`: Show day-by-day weekly summary in Markdown (`##`/`###` headings, image count, apps, domains, tags, locations per day)
 - `gyazo stats`: Show weekly summary
+- `gyazo stats cached`: Show how many images are in the local cache (`-j` available). Reads no token and hits no network
 - `gyazo upload [path]`: Upload an image (uses stdin when path is omitted). Prints the permalink URL alone; use `-j` for the full response
 - `gyazo sync`: Sync cache
 
