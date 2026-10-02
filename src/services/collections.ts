@@ -200,12 +200,14 @@ export async function readCollection(
  */
 export async function collectAllImageIds(
   collectionId: string,
-  options: { sort?: CollectionSort; maxPages?: number } = {},
-): Promise<{ ids: string[]; totalImageCount?: number }> {
+  options: { sort?: CollectionSort; maxPages?: number; ownedOnly?: boolean } = {},
+): Promise<{ ids: string[]; totalImageCount?: number; skippedNotOwned: number }> {
   const maxPages = options.maxPages && options.maxPages > 0 ? options.maxPages : 1000;
+  const ownedOnly = options.ownedOnly !== false; // default on
   const ids: string[] = [];
   const seen = new Set<string>();
   let totalImageCount: number | undefined;
+  let skippedNotOwned = 0;
 
   for (let page = 1; page <= maxPages; page++) {
     const result = await readCollection(collectionId, {
@@ -218,7 +220,13 @@ export async function collectAllImageIds(
     if (result.images.length === 0) break;
 
     for (const image of result.images) {
-      // image_id is blanked for withheld images; recover it from alias_id.
+      // A collection can hold other people's captures. Those cannot be restored
+      // by whoever runs this, so by default they are dropped, not listed. Only an
+      // explicit `owned === false` is dropped; a record that does not say stays.
+      if (ownedOnly && image?.owned === false) {
+        skippedNotOwned++;
+        continue;
+      }
       const id = imageIdFromRecord(image);
       if (id && !seen.has(id)) {
         seen.add(id);
@@ -229,11 +237,11 @@ export async function collectAllImageIds(
     // The web fallback cannot page, so one read of it is all there is.
     if (result.source === 'web') break;
     // Stop when the whole collection is in hand, or a short page ends it.
-    if (typeof totalImageCount === 'number' && ids.length >= totalImageCount) break;
+    if (typeof totalImageCount === 'number' && ids.length + skippedNotOwned >= totalImageCount) break;
     if (result.images.length < 100) break;
   }
 
-  return { ids, totalImageCount };
+  return { ids, totalImageCount, skippedNotOwned };
 }
 
 /**

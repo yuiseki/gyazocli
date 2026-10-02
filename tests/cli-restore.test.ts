@@ -102,6 +102,39 @@ test('restore records what it restored and skips it next time', async () => {
   }
 });
 
+test('restore gets the CSRF token from a session page when the captures 404', async () => {
+  // Incident-protected captures 404 on their own permalink page, so the run
+  // token must come from a page that always renders (gyazo.com/captures).
+  const cacheDir = createTempCacheDir();
+  const batches: string[][] = [];
+  const stub = await startStubServer((req, res, body) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    if (req.method === 'PATCH' && url.pathname === '/api/internal/images_incident_protection') {
+      if (req.headers['x-csrf-token'] !== 'tok') {
+        res.writeHead(422, { 'Content-Type': 'text/html' }); res.end(''); return;
+      }
+      batches.push(JSON.parse(body.toString()).image_ids);
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}'); return;
+    }
+    if (url.pathname === '/captures') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><head><meta name="csrf-token" content="tok"></head></html>'); return;
+    }
+    // Every capture permalink is withheld.
+    res.writeHead(404, { 'Content-Type': 'text/html' }); res.end('not found');
+  });
+  try {
+    const result = await runCli(cacheDir, ['restore', `https://gyazo.com/${ID_A}`, `https://gyazo.com/${ID_B}`], {
+      webOrigin: stub.origin,
+      cookieFile: cookieFile(cacheDir),
+    });
+    expect(result.status).toBe(0);
+    expect(batches.flat().sort()).toEqual([ID_A, ID_B].sort());
+  } finally {
+    await stub.close();
+  }
+});
+
 test('restore without cookies refuses and sends nothing', async () => {
   const cacheDir = createTempCacheDir();
   const { handler, batches } = restoreStub();

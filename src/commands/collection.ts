@@ -20,6 +20,7 @@ export function registerCollectionCommand(program: Command): void {
     .option('-A, --anonymous', 'read without an access token, even when one is configured')
     .option('--sort <added|created|captured>', 'image order (default: added)')
     .option('--ids', 'print just the image IDs, one per line (pipes into restore)')
+    .option('--all', 'with --ids, include images you do not own (default: yours only)')
     .action(async (collectionIdInput, options) => {
       const collectionId = requireCollectionId(collectionIdInput);
       const sort = parseCollectionSort(options.sort);
@@ -33,8 +34,17 @@ export function registerCollectionCommand(program: Command): void {
         // Just the IDs, every page of them: a collection curated to hold what
         // is safe to publish can be piped straight into `gyazo restore`.
         if (options.ids) {
-          const { ids } = await collectAllImageIds(collectionId, { sort });
+          const { ids, skippedNotOwned } = await collectAllImageIds(collectionId, {
+            sort,
+            ownedOnly: !options.all,
+          });
           for (const id of ids) console.log(id);
+          // stdout stays a clean id list for the pipe; the drop count goes to stderr.
+          if (skippedNotOwned > 0) {
+            console.error(
+              `Skipped ${skippedNotOwned} image(s) you do not own (not yours to restore). Use --all to include them.`,
+            );
+          }
           return;
         }
 

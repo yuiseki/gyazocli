@@ -398,39 +398,57 @@ test('collection --ids falls back to the web endpoint when the API 403s', async 
   }
 });
 
-test('collection --ids recovers ids blanked by Gyazo from alias_id', async () => {
-  const cacheDir = createTempCacheDir();
-  const hashes = ['6b2133144b33ef01d3941f82b33f22de', 'a3d5cf69033fe108c74c059ad7a83f2f'];
-  const alias = (h: string) => {
-    const header = Buffer.from(JSON.stringify({ alg: 'HS256' })).toString('base64url');
-    const payload = Buffer.from(JSON.stringify({ img: `_${h}` })).toString('base64url');
-    return `${header}.${payload}.sig`;
-  };
-  const webImages = hashes.map((h) => ({
-    image_id: '',
-    permalink_url: null,
-    url: null,
-    alias_id: alias(h),
-    created_at: '2026-08-30T00:00:00.000Z',
-  }));
-  const stub = await startStubServer((req, res) => {
+// A collection can hold other people's captures (owned: false). Those are not
+// yours to restore, so --ids drops them by default and says how many on stderr.
+function ownershipStub() {
+  const mine = 'aa'.padEnd(32, '0');
+  const theirs = 'bb'.padEnd(32, '0');
+  const unknown = 'cc'.padEnd(32, '0'); // no `owned` field at all
+  const images = [
+    { image_id: mine, owned: true, created_at: '2026-08-30T00:00:00.000Z' },
+    { image_id: theirs, owned: false, created_at: '2026-08-30T00:00:00.000Z' },
+    { image_id: unknown, created_at: '2026-08-30T00:00:00.000Z' },
+  ];
+  const handler = (req: any, res: any) => {
     const url = new URL(req.url || '', 'http://127.0.0.1');
-    if (url.pathname.startsWith('/api/v2/collections/')) {
-      res.writeHead(403, { 'content-type': 'application/json' });
-      res.end('{"message":"forbidden"}');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    if (url.pathname.endsWith('/images')) {
+      const page = Number(url.searchParams.get('page') || '1');
+      res.end(JSON.stringify(page === 1 ? images : []));
       return;
     }
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ id: COLLECTION_ID, total_image_count: 2, images: webImages }));
-  });
+    res.end(JSON.stringify({ id: COLLECTION_ID, name: 'c', total_image_count: images.length }));
+  };
+  return { handler, mine, theirs, unknown };
+}
+
+test('collection --ids drops images you do not own and reports the count on stderr', async () => {
+  const cacheDir = createTempCacheDir();
+  const { handler, mine, theirs, unknown } = ownershipStub();
+  const stub = await startStubServer(handler);
   try {
-    const result = await runCli(cacheDir, ['col', COLLECTION_ID, '--ids'], {
-      apiOrigin: stub.origin,
-      webOrigin: stub.origin,
-    });
+    const result = await runCli(cacheDir, ['col', COLLECTION_ID, '--ids'], { apiOrigin: stub.origin });
     expect(result.status).toBe(0);
     const lines = result.stdout.split('\n').filter(Boolean);
-    expect(lines).toEqual(hashes);
+    // Mine and the one that does not say are kept; the one marked not-owned is not.
+    expect(lines).toEqual([mine, unknown]);
+    expect(lines).not.toContain(theirs);
+    expect(result.stderr).toMatch(/Skipped 1 image/);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('collection --ids --all includes images you do not own', async () => {
+  const cacheDir = createTempCacheDir();
+  const { handler, mine, theirs, unknown } = ownershipStub();
+  const stub = await startStubServer(handler);
+  try {
+    const result = await runCli(cacheDir, ['col', COLLECTION_ID, '--ids', '--all'], { apiOrigin: stub.origin });
+    expect(result.status).toBe(0);
+    const lines = result.stdout.split('\n').filter(Boolean);
+    expect(lines.sort()).toEqual([mine, theirs, unknown].sort());
+    expect(result.stderr).not.toMatch(/Skipped/);
   } finally {
     await stub.close();
   }

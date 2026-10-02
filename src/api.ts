@@ -374,9 +374,26 @@ export async function resumeDistribution(
   return response.data;
 }
 
-/** A CSRF token for a run of batched calls, read from one capture's page. */
-export async function csrfTokenForRun(imageId: string, cookieHeader: string): Promise<string> {
-  return fetchCsrfToken(imageId, cookieHeader);
+/**
+ * A CSRF token for a run of batched calls. It must NOT come from a target
+ * capture's page: incident-protected captures 404 on their own permalink, so
+ * reading the token from one is exactly the case restore is for. The token is
+ * per-session anyway, so it is read from a page that always renders for a
+ * logged-in user. /captures is the dashboard; /settings is the fallback.
+ */
+export async function csrfTokenForRun(cookieHeader: string): Promise<string> {
+  const pages = ['captures', 'settings'];
+  let lastError: unknown;
+  for (const page of pages) {
+    try {
+      return await fetchCsrfToken(page, cookieHeader);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('could not read a CSRF token from gyazo.com');
 }
 
 export async function uploadImage(options: GyazoUploadOptions): Promise<GyazoImage> {

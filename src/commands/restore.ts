@@ -113,7 +113,7 @@ export function registerRestoreCommand(program: Command): void {
 
       let token: string;
       try {
-        token = await csrfTokenForRun(todo[0], cookieHeader);
+        token = await csrfTokenForRun(cookieHeader);
       } catch (error: any) {
         console.error(`Error: ${error.message}`);
         process.exit(1);
