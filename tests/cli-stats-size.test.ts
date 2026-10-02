@@ -17,6 +17,43 @@ test('stats size sums the file_size already stored in the cache', async () => {
   expect(parsed.totalBytes).toBe(3048);
 });
 
+test('stats size estimates the population total from the stored sizes', async () => {
+  const cacheDir = createTempCacheDir();
+  // Four known sizes (the sample), one unknown, so an estimate is warranted.
+  for (let i = 0; i < 4; i++) {
+    const id = i.toString(16).padStart(32, '0');
+    writeImageCache(cacheDir, id, { image_id: id, file_size: 1000 });
+  }
+  const bare = 'f'.padStart(32, '0');
+  writeImageCache(cacheDir, bare, { image_id: bare });
+
+  const text = await runCli(cacheDir, ['stats', 'size']);
+  expect(text.status).toBe(0);
+  expect(text.stdout).toMatch(/Estimated total:/);
+  expect(text.stdout).toMatch(/95% CI/);
+  expect(text.stdout).toMatch(/±/);
+
+  const json = await runCli(cacheDir, ['stats', 'size', '--json']);
+  const parsed = JSON.parse(json.stdout);
+  expect(parsed.withSize).toBe(4);
+  expect(parsed.images).toBe(5);
+  expect(parsed.estimate.estimateBytes).toBe(5 * 1000); // 5 images * mean 1000
+  expect(parsed.estimate.relativeMarginPct).toBe(0); // zero variance
+});
+
+test('stats size gives no estimate once every image has a known size', async () => {
+  const cacheDir = createTempCacheDir();
+  for (let i = 0; i < 3; i++) {
+    const id = i.toString(16).padStart(32, '0');
+    writeImageCache(cacheDir, id, { image_id: id, file_size: 500 });
+  }
+  const json = await runCli(cacheDir, ['stats', 'size', '--json']);
+  const parsed = JSON.parse(json.stdout);
+  expect(parsed.estimate).toBeUndefined(); // the sum is the answer, not an estimate
+  const text = await runCli(cacheDir, ['stats', 'size']);
+  expect(text.stdout).not.toMatch(/Estimated total:/);
+});
+
 test('stats size --fetch backfills missing sizes from the web per-image JSON', async () => {
   const cacheDir = createTempCacheDir();
   const sizes: Record<string, number> = {

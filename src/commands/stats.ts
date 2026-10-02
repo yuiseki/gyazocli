@@ -16,15 +16,7 @@ import {
   loadImageCache,
 } from '../storage';
 
-/**
- * Estimate a population total from a simple random sample of its members, with a
- * 95% confidence interval. Uses the finite population correction, since the
- * sample is drawn without replacement from a known, bounded population.
- */
-function estimateTotalFromSample(
-  sampleSizes: number[],
-  populationN: number,
-): {
+interface TotalEstimate {
   sampleN: number;
   meanBytes: number;
   stdevBytes: number;
@@ -32,27 +24,53 @@ function estimateTotalFromSample(
   estimateBytes: number;
   ci95: [number, number];
   relativeMarginPct: number;
-} {
-  const n = sampleSizes.length;
-  const mean = n > 0 ? sampleSizes.reduce((a, b) => a + b, 0) / n : 0;
-  const variance =
-    n > 1 ? sampleSizes.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1) : 0;
-  const stdev = Math.sqrt(variance);
-  const estimate = populationN * mean;
+}
+
+/**
+ * Estimate a population total from the mean and spread of a sample of its
+ * members, with a 95% confidence interval. Uses the finite population
+ * correction, since the sample is drawn without replacement from a known,
+ * bounded population.
+ */
+function estimateTotal(
+  sampleN: number,
+  meanBytes: number,
+  stdevBytes: number,
+  populationN: number,
+): TotalEstimate {
+  const estimate = populationN * meanBytes;
   // SE of the total, with the finite population correction (1 - n/N).
-  const fpc = populationN > 0 ? Math.max(0, 1 - n / populationN) : 1;
-  const seTotal = populationN * (stdev / Math.sqrt(Math.max(1, n))) * Math.sqrt(fpc);
+  const fpc = populationN > 0 ? Math.max(0, 1 - sampleN / populationN) : 1;
+  const seTotal = populationN * (stdevBytes / Math.sqrt(Math.max(1, sampleN))) * Math.sqrt(fpc);
   const margin = 1.96 * seTotal;
   const relativeMarginPct = estimate > 0 ? (margin / estimate) * 100 : 0;
   return {
-    sampleN: n,
-    meanBytes: mean,
-    stdevBytes: stdev,
+    sampleN,
+    meanBytes,
+    stdevBytes,
     populationN,
     estimateBytes: estimate,
     ci95: [Math.max(0, estimate - margin), estimate + margin],
     relativeMarginPct,
   };
+}
+
+/** The same estimate, from a raw sample of file sizes. */
+function estimateTotalFromSample(sampleSizes: number[], populationN: number): TotalEstimate {
+  const n = sampleSizes.length;
+  const mean = n > 0 ? sampleSizes.reduce((a, b) => a + b, 0) / n : 0;
+  const variance =
+    n > 1 ? sampleSizes.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1) : 0;
+  return estimateTotal(n, mean, Math.sqrt(variance), populationN);
+}
+
+/** One line: "Estimated total: 51.6 GB (95% CI 41.1 GB–62.1 GB, ±20.3%)." */
+function formatEstimateLine(est: TotalEstimate, formatBytes: (b: number) => string): string {
+  return (
+    `Estimated total: ${formatBytes(est.estimateBytes)} ` +
+    `(95% CI ${formatBytes(est.ci95[0])}–${formatBytes(est.ci95[1])}, ` +
+    `±${est.relativeMarginPct.toFixed(1)}%).`
+  );
 }
 
 function formatBytes(bytes: number): string {
@@ -262,23 +280,30 @@ export function registerStatsCommand(program: Command): void {
           console.log(
             `Mean ${formatBytes(est.meanBytes)}/image, stdev ${formatBytes(est.stdevBytes)}.`,
           );
-          console.log(
-            `Estimated total: ${formatBytes(est.estimateBytes)} ` +
-              `(95% CI ${formatBytes(est.ci95[0])}–${formatBytes(est.ci95[1])}, ` +
-              `±${est.relativeMarginPct.toFixed(1)}%).`,
-          );
+          console.log(formatEstimateLine(est, formatBytes));
           return;
         }
       }
 
       const summary = sumCachedFileSizes();
+      // Treat the known sizes as a sample and estimate the whole, as long as some
+      // are still unknown (otherwise the sum is the answer, not an estimate) and
+      // there are at least two to get a spread from.
+      const estimate =
+        summary.withSize >= 2 && summary.withSize < summary.images
+          ? estimateTotal(summary.withSize, summary.meanBytes, summary.stdevBytes, summary.images)
+          : null;
+
       if (options.json) {
-        console.log(JSON.stringify(summary, null, 2));
+        console.log(JSON.stringify(estimate ? { ...summary, estimate } : summary, null, 2));
         return;
       }
       const pct = summary.images > 0 ? Math.round((summary.withSize / summary.images) * 100) : 0;
       console.log(`Total size: ${formatBytes(summary.totalBytes)} (${summary.totalBytes.toLocaleString('en-US')} bytes)`);
       console.log(`Known for ${summary.withSize.toLocaleString('en-US')} of ${summary.images.toLocaleString('en-US')} cached images (${pct}%)`);
+      if (estimate) {
+        console.log(formatEstimateLine(estimate, formatBytes));
+      }
       if (summary.withSize < summary.images) {
         console.log('Run `gyazo stats size --fetch` to fill in the rest.');
       }

@@ -62,13 +62,23 @@ export interface FileSizeSummary {
   withSize: number;
   /** Sum of the known file_size values, in bytes. */
   totalBytes: number;
+  /** Mean of the known file_size values, in bytes. */
+  meanBytes: number;
+  /** Sample standard deviation of the known file_size values, in bytes. */
+  stdevBytes: number;
 }
 
-/** Total the file_size of cached images. Reads each record; fetches nothing. */
+/**
+ * Total the file_size of cached images, and the mean and spread of the known
+ * ones, so the stored sizes can serve as a sample to estimate the whole. Reads
+ * each record; fetches nothing. Variance is from running sum and sum-of-squares,
+ * so it never holds all 90k values at once.
+ */
 export function sumCachedFileSizes(): FileSizeSummary {
   let images = 0;
   let withSize = 0;
   let totalBytes = 0;
+  let sumSquares = 0;
   for (const file of iterCachedImagePaths()) {
     images += 1;
     try {
@@ -76,12 +86,17 @@ export function sumCachedFileSizes(): FileSizeSummary {
       if (typeof record?.file_size === 'number') {
         withSize += 1;
         totalBytes += record.file_size;
+        sumSquares += record.file_size * record.file_size;
       }
     } catch {
       // A half-written or corrupt record just does not count toward the size.
     }
   }
-  return { images, withSize, totalBytes };
+  const meanBytes = withSize > 0 ? totalBytes / withSize : 0;
+  const variance =
+    withSize > 1 ? Math.max(0, (sumSquares - totalBytes * totalBytes / withSize) / (withSize - 1)) : 0;
+  const stdevBytes = Math.sqrt(variance);
+  return { images, withSize, totalBytes, meanBytes, stdevBytes };
 }
 
 /** Image ids whose cached record has no numeric file_size yet, up to `limit`. */
