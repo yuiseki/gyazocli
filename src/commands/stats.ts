@@ -5,11 +5,8 @@ import type { Command } from 'commander';
 import { ensureAccessToken } from '../credentials';
 import { buildStatsDateRange } from '../dates';
 import { parsePositiveIntegerOption } from '../options';
-import { loadCookieHeader } from '../cookies';
-import { fetchImagesSummary } from '../api';
 import {
   countCache,
-  countCacheByMonth,
   sumCachedFileSizes,
 } from '../storage';
 
@@ -142,86 +139,6 @@ export function registerStatsCommand(program: Command): void {
       console.log(`Cache dir: ${counts.cacheDir}`);
     });
 
-  // `stats coverage`: how much of the account is actually cached, by year, from
-  // the account's true monthly counts (images_summary) against what is on disk.
-  // The listing and search cannot enumerate the whole account, so this is the
-  // only honest picture of what is still only on Gyazo -- the salvage map.
-  stats
-    .command('coverage')
-    .description("Cache coverage against the account's true counts (needs cookies)")
-    .option('--cookies <path>', 'gyazo.com cookies')
-    .option('-j, --json', 'output as JSON')
-    .action(async (options) => {
-      const cookieHeader = loadCookieHeader(options.cookies);
-      if (!cookieHeader) {
-        console.error('Error: stats coverage needs gyazo.com cookies.');
-        console.error('Put them in ~/.config/gyazo/cookie.json or pass --cookies <path>.');
-        process.exit(1);
-      }
-      let summary: any;
-      try {
-        summary = await fetchImagesSummary(cookieHeader);
-      } catch (error: any) {
-        console.error('Error fetching images_summary:', error.message);
-        process.exit(1);
-      }
-      const monthly = summary?.monthly_counts || {};
-      const { byMonth: cachedByMonth, sizedByMonth } = countCacheByMonth();
-
-      const years = Array.from(
-        new Set([...Object.keys(monthly), ...Object.keys(cachedByMonth)]),
-      ).sort();
-      let trueTotal = 0;
-      let cachedTotal = 0;
-      let sizedTotal = 0;
-      const sumYear = (byMonth: Record<string, Record<string, number>>, year: string) =>
-        Object.values(byMonth[year] || {}).reduce((a: number, b: number) => a + Number(b), 0);
-      const rows = years.map((year) => {
-        const trueYear = sumYear(monthly as any, year);
-        const cachedYear = sumYear(cachedByMonth, year);
-        const sizedYear = sumYear(sizedByMonth, year);
-        trueTotal += trueYear;
-        cachedTotal += cachedYear;
-        sizedTotal += sizedYear;
-        return {
-          year,
-          true: trueYear,
-          cached: cachedYear,
-          missing: Math.max(0, trueYear - cachedYear),
-          withSize: sizedYear,
-          sizeMissing: Math.max(0, trueYear - sizedYear),
-        };
-      });
-
-      if (options.json) {
-        console.log(JSON.stringify({
-          trueTotal,
-          cachedTotal,
-          sizedTotal,
-          missing: Math.max(0, trueTotal - cachedTotal),
-          sizeMissing: Math.max(0, trueTotal - sizedTotal),
-          years: rows,
-        }, null, 2));
-        return;
-      }
-      const n = (v: number) => v.toLocaleString('en-US');
-      const pct = (part: number, whole: number) => (whole ? `${Math.round((part / whole) * 100)}%` : '-');
-      console.log(
-        `True total: ${n(trueTotal)}   ` +
-          `Cached: ${n(cachedTotal)} (${pct(cachedTotal, trueTotal)})   ` +
-          `With size: ${n(sizedTotal)} (${pct(sizedTotal, trueTotal)})   ` +
-          `Missing: ${n(Math.max(0, trueTotal - cachedTotal))}`,
-      );
-      console.log('');
-      // Two coverages against the true count: metadata (cached) and file_size.
-      console.log('year |     true |   cached | cov% |  missing | withSize | cov% |  missing');
-      for (const r of rows) {
-        console.log(
-          `${r.year} | ${String(r.true).padStart(8)} | ${String(r.cached).padStart(8)} | ${pct(r.cached, r.true).padStart(4)} | ${String(r.missing).padStart(8)} | ` +
-            `${String(r.withSize).padStart(8)} | ${pct(r.withSize, r.true).padStart(4)} | ${String(r.sizeMissing).padStart(8)}`,
-        );
-      }
-    });
 
   // `stats size`: total the file_size of cached images that have one, and how
   // far that reaches. No estimate and no fetching: file sizes come in through
