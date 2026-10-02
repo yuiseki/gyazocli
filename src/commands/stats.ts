@@ -14,6 +14,8 @@ import {
   sampleCachedImageIds,
   setCachedFileSize,
   loadImageCache,
+  loadSizeSampleValues,
+  recordSizeSamples,
 } from '../storage';
 
 interface TotalEstimate {
@@ -239,21 +241,24 @@ export function registerStatsCommand(program: Command): void {
           ? sampleCachedImageIds(max ?? populationN)
           : cachedImageIdsMissingFileSize(max);
 
-        const sampleSizes: number[] = [];
+        // When drawing at random, remember which sizes came from the draw, so
+        // the estimate uses only this unbiased sample and never the opportunistic
+        // pile the cache fills with.
+        const drawn: Record<string, number> = {};
         let fetched = 0;
         let failed = 0;
         for (let i = 0; i < targets.length; i++) {
           const id = targets[i];
           const known = loadImageCache(id)?.file_size;
           if (typeof known === 'number') {
-            sampleSizes.push(known);
+            if (options.random) drawn[id] = known;
             continue;
           }
           try {
             const record = await fetchImageWebJson(id, cookieHeader);
             if (typeof record?.file_size === 'number') {
               setCachedFileSize(id, record.file_size);
-              sampleSizes.push(record.file_size);
+              if (options.random) drawn[id] = record.file_size;
               fetched += 1;
             } else {
               failed += 1;
@@ -269,13 +274,17 @@ export function registerStatsCommand(program: Command): void {
         console.error(`Backfilled ${fetched} size(s), ${failed} without one, of ${targets.length} target(s).`);
 
         if (options.random) {
-          const est = estimateTotalFromSample(sampleSizes, populationN);
+          // Accumulate this draw into the random-sample ledger and estimate from
+          // the whole of it, so repeated runs tighten the interval. The estimate
+          // never touches the opportunistic sizes the cache is otherwise full of.
+          recordSizeSamples(drawn);
+          const est = estimateTotalFromSample(loadSizeSampleValues(), populationN);
           if (options.json) {
             console.log(JSON.stringify(est, null, 2));
             return;
           }
           console.log(
-            `Sampled ${est.sampleN.toLocaleString('en-US')} of ${populationN.toLocaleString('en-US')} images at random.`,
+            `Random sample: ${est.sampleN.toLocaleString('en-US')} of ${populationN.toLocaleString('en-US')} images.`,
           );
           console.log(
             `Mean ${formatBytes(est.meanBytes)}/image, stdev ${formatBytes(est.stdevBytes)}.`,
@@ -286,12 +295,14 @@ export function registerStatsCommand(program: Command): void {
       }
 
       const summary = sumCachedFileSizes();
-      // Treat the known sizes as a sample and estimate the whole, as long as some
-      // are still unknown (otherwise the sum is the answer, not an estimate) and
-      // there are at least two to get a spread from.
+      // The estimate comes ONLY from the random-sample ledger, never from the
+      // stored sizes: the cache fills by date and by query, so its sizes are a
+      // biased sample whose mean drifts as more are added (which is exactly the
+      // "estimate keeps rising" surprise). A uniform random draw does not.
+      const randomSample = loadSizeSampleValues();
       const estimate =
-        summary.withSize >= 2 && summary.withSize < summary.images
-          ? estimateTotal(summary.withSize, summary.meanBytes, summary.stdevBytes, summary.images)
+        randomSample.length >= 2 && summary.withSize < summary.images
+          ? estimateTotalFromSample(randomSample, summary.images)
           : null;
 
       if (options.json) {
@@ -302,7 +313,12 @@ export function registerStatsCommand(program: Command): void {
       console.log(`Total size: ${formatBytes(summary.totalBytes)} (${summary.totalBytes.toLocaleString('en-US')} bytes)`);
       console.log(`Known for ${summary.withSize.toLocaleString('en-US')} of ${summary.images.toLocaleString('en-US')} cached images (${pct}%)`);
       if (estimate) {
-        console.log(formatEstimateLine(estimate, formatBytes));
+        console.log(
+          `${formatEstimateLine(estimate, formatBytes)} ` +
+            `[from a random sample of ${estimate.sampleN.toLocaleString('en-US')}]`,
+        );
+      } else if (summary.withSize < summary.images) {
+        console.log('For an unbiased total, run `gyazo stats size --fetch --random --max <n>`.');
       }
       if (summary.withSize < summary.images) {
         console.log('Run `gyazo stats size --fetch` to fill in the rest.');

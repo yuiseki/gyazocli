@@ -17,9 +17,10 @@ test('stats size sums the file_size already stored in the cache', async () => {
   expect(parsed.totalBytes).toBe(3048);
 });
 
-test('stats size estimates the population total from the stored sizes', async () => {
+test('stats size does NOT estimate from the biased stored sizes', async () => {
+  // The cache is full of sizes but none came from a random draw, so plain
+  // stats size must refuse to estimate (the stored pile is a biased sample).
   const cacheDir = createTempCacheDir();
-  // Four known sizes (the sample), one unknown, so an estimate is warranted.
   for (let i = 0; i < 4; i++) {
     const id = i.toString(16).padStart(32, '0');
     writeImageCache(cacheDir, id, { image_id: id, file_size: 1000 });
@@ -29,16 +30,45 @@ test('stats size estimates the population total from the stored sizes', async ()
 
   const text = await runCli(cacheDir, ['stats', 'size']);
   expect(text.status).toBe(0);
-  expect(text.stdout).toMatch(/Estimated total:/);
-  expect(text.stdout).toMatch(/95% CI/);
-  expect(text.stdout).toMatch(/±/);
+  expect(text.stdout).not.toMatch(/Estimated total:/);
+  expect(text.stdout).toMatch(/--random/); // points the user at the unbiased path
 
   const json = await runCli(cacheDir, ['stats', 'size', '--json']);
-  const parsed = JSON.parse(json.stdout);
-  expect(parsed.withSize).toBe(4);
-  expect(parsed.images).toBe(5);
-  expect(parsed.estimate.estimateBytes).toBe(5 * 1000); // 5 images * mean 1000
-  expect(parsed.estimate.relativeMarginPct).toBe(0); // zero variance
+  expect(JSON.parse(json.stdout).estimate).toBeUndefined();
+});
+
+test('once a random sample exists, plain stats size estimates from it', async () => {
+  const cacheDir = createTempCacheDir();
+  // A biased pile of large sizes, plus more unsized images than the draw size,
+  // so the cache stays incomplete and an estimate is due.
+  for (let i = 0; i < 6; i++) {
+    const id = `ba${i}`.padEnd(32, '0');
+    writeImageCache(cacheDir, id, { image_id: id, file_size: 9_000_000 }); // huge, biased
+  }
+  for (let i = 0; i < 14; i++) {
+    const id = i.toString(16).padStart(32, '0'); // unique, unsized
+    writeImageCache(cacheDir, id, { image_id: id });
+  }
+  // Build a random-sample ledger via --random against a stub that returns a
+  // small, representative size.
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    const m = url.pathname.match(/^\/([0-9a-f]{32})\.json$/);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(m ? { image_id: m[1], file_size: 1000 } : {}));
+  });
+  try {
+    // Sample every image at random; stored ones reuse their size, unsized fetch 1000.
+    await runCli(cacheDir, ['stats', 'size', '--fetch', '--random', '--max', '10'], { webOrigin: stub.origin });
+    const json = await runCli(cacheDir, ['stats', 'size', '--json']);
+    const parsed = JSON.parse(json.stdout);
+    // The estimate is from the random ledger (10 ids), NOT the biased sum.
+    expect(parsed.estimate).toBeDefined();
+    expect(parsed.estimate.sampleN).toBe(10);
+    expect(parsed.estimate.populationN).toBe(20);
+  } finally {
+    await stub.close();
+  }
 });
 
 test('stats size gives no estimate once every image has a known size', async () => {

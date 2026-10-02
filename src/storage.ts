@@ -139,6 +139,40 @@ export function sampleCachedImageIds(n: number): string[] {
   return reservoir;
 }
 
+/**
+ * A ledger of file sizes gathered by uniform random sampling, kept apart from
+ * the general cache. The cache fills opportunistically (by date, by query), so
+ * its sizes are a biased sample and must not be used to estimate a population
+ * total. Only ids drawn at random land here, so an estimate from this ledger is
+ * unbiased however the cache was filled. Keyed by id, so repeated draws grow it
+ * without double counting.
+ */
+function sizeSamplePath(): string {
+  return path.join(getCacheDir(), 'size_sample.json');
+}
+
+export function loadSizeSampleValues(): number[] {
+  try {
+    const obj = JSON.parse(fs.readFileSync(sizeSamplePath(), 'utf-8'));
+    return Object.values(obj).filter((v): v is number => typeof v === 'number' && v > 0);
+  } catch {
+    return [];
+  }
+}
+
+/** Merge random-sample (id -> file_size) pairs into the ledger; returns its size. */
+export function recordSizeSamples(samples: Record<string, number>): number {
+  let existing: Record<string, number> = {};
+  try {
+    existing = JSON.parse(fs.readFileSync(sizeSamplePath(), 'utf-8'));
+  } catch {
+    existing = {};
+  }
+  Object.assign(existing, samples);
+  fs.writeFileSync(sizeSamplePath(), JSON.stringify(existing));
+  return Object.keys(existing).length;
+}
+
 /** Merge a fetched file_size into a cached record, without touching the rest. */
 export function setCachedFileSize(imageId: string, fileSize: number): void {
   const record = loadImageCache(imageId) || { image_id: imageId };
