@@ -98,23 +98,13 @@ export interface FileSizeSummary {
   withSize: number;
   /** Sum of the known file_size values, in bytes. */
   totalBytes: number;
-  /** Mean of the known file_size values, in bytes. */
-  meanBytes: number;
-  /** Sample standard deviation of the known file_size values, in bytes. */
-  stdevBytes: number;
 }
 
-/**
- * Total the file_size of cached images, and the mean and spread of the known
- * ones, so the stored sizes can serve as a sample to estimate the whole. Reads
- * each record; fetches nothing. Variance is from running sum and sum-of-squares,
- * so it never holds all 90k values at once.
- */
+/** Total the file_size of cached images that have one. Reads each record; fetches nothing. */
 export function sumCachedFileSizes(): FileSizeSummary {
   let images = 0;
   let withSize = 0;
   let totalBytes = 0;
-  let sumSquares = 0;
   for (const file of iterCachedImagePaths()) {
     images += 1;
     try {
@@ -122,98 +112,12 @@ export function sumCachedFileSizes(): FileSizeSummary {
       if (typeof record?.file_size === 'number') {
         withSize += 1;
         totalBytes += record.file_size;
-        sumSquares += record.file_size * record.file_size;
       }
     } catch {
       // A half-written or corrupt record just does not count toward the size.
     }
   }
-  const meanBytes = withSize > 0 ? totalBytes / withSize : 0;
-  const variance =
-    withSize > 1 ? Math.max(0, (sumSquares - totalBytes * totalBytes / withSize) / (withSize - 1)) : 0;
-  const stdevBytes = Math.sqrt(variance);
-  return { images, withSize, totalBytes, meanBytes, stdevBytes };
-}
-
-/** Image ids whose cached record has no numeric file_size yet, up to `limit`. */
-export function cachedImageIdsMissingFileSize(limit?: number): string[] {
-  const ids: string[] = [];
-  for (const file of iterCachedImagePaths()) {
-    if (limit && ids.length >= limit) break;
-    try {
-      const record = JSON.parse(fs.readFileSync(file, 'utf-8'));
-      if (typeof record?.file_size !== 'number') {
-        const id = record?.image_id || path.basename(file, '.json');
-        if (id) ids.push(id);
-      }
-    } catch {
-      // Skip unreadable records; a re-fetch would overwrite them anyway.
-    }
-  }
-  return ids;
-}
-
-/**
- * A uniform random sample of `n` cached image ids, by reservoir sampling over
- * the whole images/ tree in one pass. Used to estimate a population total (e.g.
- * cumulative file size) without fetching every record.
- */
-export function sampleCachedImageIds(n: number): string[] {
-  if (n <= 0) return [];
-  const reservoir: string[] = [];
-  let seen = 0;
-  for (const file of iterCachedImagePaths()) {
-    const id = path.basename(file, '.json');
-    if (reservoir.length < n) {
-      reservoir.push(id);
-    } else {
-      const j = Math.floor(Math.random() * (seen + 1));
-      if (j < n) reservoir[j] = id;
-    }
-    seen += 1;
-  }
-  return reservoir;
-}
-
-/**
- * A ledger of file sizes gathered by uniform random sampling, kept apart from
- * the general cache. The cache fills opportunistically (by date, by query), so
- * its sizes are a biased sample and must not be used to estimate a population
- * total. Only ids drawn at random land here, so an estimate from this ledger is
- * unbiased however the cache was filled. Keyed by id, so repeated draws grow it
- * without double counting.
- */
-function sizeSamplePath(): string {
-  return path.join(getCacheDir(), 'size_sample.json');
-}
-
-export function loadSizeSampleValues(): number[] {
-  try {
-    const obj = JSON.parse(fs.readFileSync(sizeSamplePath(), 'utf-8'));
-    return Object.values(obj).filter((v): v is number => typeof v === 'number' && v > 0);
-  } catch {
-    return [];
-  }
-}
-
-/** Merge random-sample (id -> file_size) pairs into the ledger; returns its size. */
-export function recordSizeSamples(samples: Record<string, number>): number {
-  let existing: Record<string, number> = {};
-  try {
-    existing = JSON.parse(fs.readFileSync(sizeSamplePath(), 'utf-8'));
-  } catch {
-    existing = {};
-  }
-  Object.assign(existing, samples);
-  fs.writeFileSync(sizeSamplePath(), JSON.stringify(existing));
-  return Object.keys(existing).length;
-}
-
-/** Merge a fetched file_size into a cached record, without touching the rest. */
-export function setCachedFileSize(imageId: string, fileSize: number): void {
-  const record = loadImageCache(imageId) || { image_id: imageId };
-  record.file_size = fileSize;
-  saveImageCache(imageId, record);
+  return { images, withSize, totalBytes };
 }
 
 /** How much is in the local cache, by kind. Counts files; reads none of them. */
