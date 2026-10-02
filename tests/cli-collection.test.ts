@@ -1,4 +1,6 @@
 import { test, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   createTempCacheDir,
   runCli,
@@ -354,6 +356,56 @@ test('collection --ids feeds restore (bare ids are accepted)', async () => {
     const id = result.stdout.trim();
     // A bare id on its own line is what restore/touch accept via normalizeImageId.
     expect(id).toMatch(/^[0-9a-f]{32}$/);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('collection --ids uses the boards endpoint with cookies and pages it', async () => {
+  const cacheDir = createTempCacheDir();
+  const cookieFile = path.join(cacheDir, 'cookie.json');
+  fs.writeFileSync(
+    cookieFile,
+    JSON.stringify([{ name: 'Gyazo_session', value: 's', domain: '.gyazo.com' }]),
+  );
+  const total = 120;
+  const all = Array.from({ length: total }, (_, i) => ({
+    image_id: `cc${String(i).padStart(30, '0')}`,
+    permalink_url: `https://gyazo.com/cc${String(i).padStart(30, '0')}`,
+    incident_protected: true,
+    created_at: '2019-06-21T00:00:00.000Z',
+  }));
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    // The public .json would blank these ids; the boards endpoint must be used.
+    if (url.pathname === `/api/internal/boards/${COLLECTION_ID}/images`) {
+      if (!String(req.headers.cookie || '').includes('Gyazo_session')) {
+        res.writeHead(401); res.end('[]'); return;
+      }
+      const page = Number(url.searchParams.get('page') || '1');
+      const per = Number(url.searchParams.get('per') || '100');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(all.slice((page - 1) * per, page * per)));
+      return;
+    }
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end('{}');
+  });
+  try {
+    const result = await runCli(cacheDir, ['col', COLLECTION_ID, '--ids'], {
+      webOrigin: stub.origin,
+      cookieFile,
+    });
+    expect(result.status).toBe(0);
+    const lines = result.stdout.split('\n').filter(Boolean);
+    expect(lines).toHaveLength(total);
+    expect(lines[0]).toBe(all[0].image_id);
+    expect(lines[total - 1]).toBe(all[total - 1].image_id);
+    // It walked two pages of the boards endpoint.
+    const pages = stub.requests
+      .filter((r) => r.url.includes('/boards/'))
+      .map((r) => new URL(r.url, 'http://127.0.0.1').searchParams.get('page'));
+    expect(pages).toEqual(['1', '2']);
   } finally {
     await stub.close();
   }

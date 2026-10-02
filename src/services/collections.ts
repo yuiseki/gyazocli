@@ -7,6 +7,7 @@
 import {
   getCollection,
   getCollectionDetail,
+  listBoardImages,
   listCollectionImages,
   listCollections,
   type GyazoCollectionSummary,
@@ -200,9 +201,33 @@ export async function readCollection(
  */
 export async function collectAllImageIds(
   collectionId: string,
-  options: { sort?: CollectionSort; maxPages?: number } = {},
+  options: { sort?: CollectionSort; maxPages?: number; cookieHeader?: string } = {},
 ): Promise<{ ids: string[]; totalImageCount?: number }> {
   const maxPages = options.maxPages && options.maxPages > 0 ? options.maxPages : 1000;
+
+  // With cookies, page the web app's own (boards) endpoint. It is the only path
+  // that returns the real image_id during the incident recovery: the public
+  // /collections/<id>.json blanks it for withheld images, and /api/v2 answers
+  // 403. Without cookies, fall back to the token/web path below.
+  if (options.cookieHeader) {
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    const per = 100;
+    for (let page = 1; page <= maxPages; page++) {
+      const images = await listBoardImages(collectionId, page, per, options.cookieHeader);
+      if (images.length === 0) break;
+      for (const image of images) {
+        const id = imageIdFromRecord(image);
+        if (id && !seen.has(id)) {
+          seen.add(id);
+          ids.push(id);
+        }
+      }
+      if (images.length < per) break;
+    }
+    return { ids };
+  }
+
   const ids: string[] = [];
   const seen = new Set<string>();
   let totalImageCount: number | undefined;

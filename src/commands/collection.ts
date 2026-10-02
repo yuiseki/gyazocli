@@ -3,6 +3,7 @@
  */
 import type { Command } from 'commander';
 import { resolveAccessToken } from '../credentials';
+import { loadCookieHeader } from '../cookies';
 import {
   requireCollectionId,
   parseCollectionSort,
@@ -20,6 +21,7 @@ export function registerCollectionCommand(program: Command): void {
     .option('-A, --anonymous', 'read without an access token, even when one is configured')
     .option('--sort <added|created|captured>', 'image order (default: added)')
     .option('--ids', 'print just the image IDs, one per line (pipes into restore)')
+    .option('--cookies <path>', 'gyazo.com cookies, so --ids gets the real IDs of withheld images')
     .action(async (collectionIdInput, options) => {
       const collectionId = requireCollectionId(collectionIdInput);
       const sort = parseCollectionSort(options.sort);
@@ -33,7 +35,11 @@ export function registerCollectionCommand(program: Command): void {
         // Just the IDs, every page of them: a collection curated to hold what
         // is safe to publish can be piped straight into `gyazo restore`.
         if (options.ids) {
-          const { ids } = await collectAllImageIds(collectionId, { sort });
+          // Cookies let --ids read the real IDs through the boards endpoint, the
+          // one path that is not blanked (web .json) or forbidden (api/v2) during
+          // the incident recovery. Without them it falls back to the token path.
+          const cookieHeader = loadCookieHeader(options.cookies) || undefined;
+          const { ids } = await collectAllImageIds(collectionId, { sort, cookieHeader });
           for (const id of ids) console.log(id);
           return;
         }

@@ -48,6 +48,7 @@ const apiSearchUrl = () => `${apiOrigin()}/api/search`;
 const apiUsersMeUrl = () => `${apiOrigin()}/api/users/me`;
 const apiUploadUrl = () => `${uploadOrigin()}/api/upload`;
 const webCollectionUrl = (id: string) => `${webOrigin()}/collections/${id}.json`;
+const webBoardImagesUrl = (id: string) => `${webOrigin()}/api/internal/boards/${id}/images`;
 const apiCollectionsUrl = () => `${apiOrigin()}/api/v2/collections`;
 const apiCollectionUrl = (id: string) => `${apiCollectionsUrl()}/${id}`;
 const apiCollectionImagesUrl = (id: string) => `${apiCollectionUrl(id)}/images`;
@@ -218,6 +219,33 @@ export async function listCollectionImages(
   per: number = 100,
 ): Promise<GyazoImage[]> {
   const data = await requestWithRetry(apiCollectionImagesUrl(collectionId), { page, per });
+  if (Array.isArray(data)) return data;
+  return Array.isArray(data?.images) ? data.images : [];
+}
+
+/**
+ * A page of a collection's images through the web app's own ("boards") endpoint,
+ * using the session cookie.
+ *
+ * This is the one path that tells the truth during the incident recovery: the
+ * public /collections/<id>.json blanks image_id (and permalink/url) for any
+ * withheld image, and the API /api/v2 endpoint answers 403, but this returns the
+ * real image_id and the incident_protected flag, and it really pages. A
+ * collection id works directly as the board id. `order` matches what the site
+ * sends (image_desc).
+ */
+export async function listBoardImages(
+  collectionId: string,
+  page: number = 1,
+  per: number = 100,
+  cookieHeader: string = '',
+  order: string = 'image_desc',
+): Promise<any[]> {
+  const data = await requestWithRetry(
+    webBoardImagesUrl(collectionId),
+    { page, per, order },
+    { Cookie: cookieHeader, 'X-Requested-With': 'XMLHttpRequest' },
+  );
   if (Array.isArray(data)) return data;
   return Array.isArray(data?.images) ? data.images : [];
 }
