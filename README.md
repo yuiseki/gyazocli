@@ -49,7 +49,7 @@ if a file of that name exists in the working directory.
 - `gyazo stats cached`: Show how many images are in the local cache (`-j` available). Reads no token and hits no network
 - `gyazo stats size`: Total the file size of cached images. `file_size` is not in the public API, so backfill it from the web per-image JSON with `--fetch` (`--max <n>` to cap a run, `--cookies <path>` for withheld images), then it sums instantly. While sizes are still partial, it also estimates the full total from the known ones with a 95% confidence interval. Add `--random` to fetch a uniform random sample for that estimate instead of filling in order. Finite population correction included; `-j` available
 - `gyazo upload [path]`: Upload an image (uses stdin when path is omitted). Prints the permalink URL alone; use `-j` for the full response
-- `gyazo sync`: Sync cache
+- `gyazo sync`: Sync cache. Detail source: `--web` (gyazo.com/<id>.json, fast, carries `file_size`), `--api` (OAuth API, carries addresses/domains/objects), or `--web-and-api` (both, merged). With cookies the default is `--web`; run `--api` afterwards to fill in what the web source lacks. The passes merge per field and never clobber each other, and a record already complete for a source is skipped (`--cookies <path>` for the web source)
 
 Date range notes:
 - Default range for `apps|domains|tags|locations|stats` is from 8 days ago to yesterday

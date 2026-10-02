@@ -1027,7 +1027,9 @@ test('sync does not fetch a capture it already has', async () => {
   writeImageCache(cacheDir, id, {
     ...lean,
     ocr: null,
-    metadata: { app: 'Gyazo Android', ocr: { locale: 'und', description: 'すでに取得済み' } },
+    // original_url is on every record the API returns; it is how sync knows the
+    // API detail is already in hand.
+    metadata: { app: 'Gyazo Android', original_url: null, ocr: { locale: 'und', description: 'すでに取得済み' } },
   });
 
   const stub = await startStubServer((req, res) => {
