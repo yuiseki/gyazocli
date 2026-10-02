@@ -397,3 +397,41 @@ test('collection --ids falls back to the web endpoint when the API 403s', async 
     await stub.close();
   }
 });
+
+test('collection --ids recovers ids blanked by Gyazo from alias_id', async () => {
+  const cacheDir = createTempCacheDir();
+  const hashes = ['6b2133144b33ef01d3941f82b33f22de', 'a3d5cf69033fe108c74c059ad7a83f2f'];
+  const alias = (h: string) => {
+    const header = Buffer.from(JSON.stringify({ alg: 'HS256' })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({ img: `_${h}` })).toString('base64url');
+    return `${header}.${payload}.sig`;
+  };
+  const webImages = hashes.map((h) => ({
+    image_id: '',
+    permalink_url: null,
+    url: null,
+    alias_id: alias(h),
+    created_at: '2026-08-30T00:00:00.000Z',
+  }));
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    if (url.pathname.startsWith('/api/v2/collections/')) {
+      res.writeHead(403, { 'content-type': 'application/json' });
+      res.end('{"message":"forbidden"}');
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ id: COLLECTION_ID, total_image_count: 2, images: webImages }));
+  });
+  try {
+    const result = await runCli(cacheDir, ['col', COLLECTION_ID, '--ids'], {
+      apiOrigin: stub.origin,
+      webOrigin: stub.origin,
+    });
+    expect(result.status).toBe(0);
+    const lines = result.stdout.split('\n').filter(Boolean);
+    expect(lines).toEqual(hashes);
+  } finally {
+    await stub.close();
+  }
+});

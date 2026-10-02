@@ -77,3 +77,33 @@ export function normalizeCollectionId(input: string): string | null {
   return IMAGE_ID_PATTERN.test(withoutExtension) ? withoutExtension.toLowerCase() : null;
 }
 
+
+/**
+ * The image ID of a capture record, recovered even when Gyazo blanks it.
+ *
+ * The web collection endpoint returns an empty `image_id` (and null
+ * permalink/url) for images it is withholding, leaving only `alias_id`: a JWT
+ * whose payload carries `{"img":"_<32 hex>"}`. The hash after the underscore is
+ * the image ID, so it is decoded from there when the plain field is missing.
+ */
+export function imageIdFromRecord(image: any): string | null {
+  const direct = normalizeImageId(image?.image_id || '');
+  if (direct) return direct;
+
+  const fromUrl =
+    normalizeImageId(image?.permalink_url || '') || normalizeImageId(image?.url || '');
+  if (fromUrl) return fromUrl;
+
+  const alias = image?.alias_id;
+  if (typeof alias === 'string' && alias.includes('.')) {
+    try {
+      const payload = alias.split('.')[1];
+      const json = Buffer.from(payload + '='.repeat((-payload.length % 4 + 4) % 4), 'base64').toString('utf-8');
+      const img = JSON.parse(json)?.img;
+      if (typeof img === 'string') return normalizeImageId(img.replace(/^_/, ''));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}

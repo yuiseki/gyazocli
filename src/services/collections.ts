@@ -12,7 +12,7 @@ import {
   type GyazoCollectionSummary,
 } from '../api';
 import { resolveAccessToken } from '../credentials';
-import { normalizeCollectionId } from '../ids';
+import { normalizeCollectionId, imageIdFromRecord } from '../ids';
 import { formatCreatedAt, normalizeText } from '../format';
 import { printListImages } from './images';
 
@@ -218,8 +218,9 @@ export async function collectAllImageIds(
     if (result.images.length === 0) break;
 
     for (const image of result.images) {
-      const id = image?.image_id;
-      if (typeof id === 'string' && !seen.has(id)) {
+      // image_id is blanked for withheld images; recover it from alias_id.
+      const id = imageIdFromRecord(image);
+      if (id && !seen.has(id)) {
         seen.add(id);
         ids.push(id);
       }
