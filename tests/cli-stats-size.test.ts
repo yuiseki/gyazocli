@@ -191,6 +191,35 @@ test('stats size --fetch --random samples and estimates the population total', a
   }
 });
 
+test('stats size --random works without --fetch and grows the ledger', async () => {
+  const cacheDir = createTempCacheDir();
+  for (let i = 0; i < 30; i++) {
+    const id = i.toString(16).padStart(32, '0');
+    writeImageCache(cacheDir, id, { image_id: id });
+  }
+  const hits: string[] = [];
+  const stub = await startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    const m = url.pathname.match(/^\/([0-9a-f]{32})\.json$/);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    if (m) { hits.push(m[1]); res.end(JSON.stringify({ image_id: m[1], file_size: 1000 })); return; }
+    res.end('{}');
+  });
+  try {
+    // First draw of 5 (no --fetch flag).
+    const first = await runCli(cacheDir, ['stats', 'size', '--random', '--max', '5', '--json'], { webOrigin: stub.origin });
+    expect(first.status).toBe(0);
+    expect(hits.length).toBe(5);
+    expect(JSON.parse(first.stdout).sampleN).toBe(5);
+
+    // A second draw of 10 grows the ledger (not resets it).
+    const second = await runCli(cacheDir, ['stats', 'size', '--random', '--max', '10', '--json'], { webOrigin: stub.origin });
+    expect(JSON.parse(second.stdout).sampleN).toBeGreaterThanOrEqual(10);
+  } finally {
+    await stub.close();
+  }
+});
+
 test('stats size --fetch --max caps how many it fetches', async () => {
   const cacheDir = createTempCacheDir();
   for (let i = 0; i < 5; i++) {

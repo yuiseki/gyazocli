@@ -212,15 +212,17 @@ export function registerStatsCommand(program: Command): void {
     .command('size')
     .description("Total the file size of cached images (backfill sizes with --fetch)")
     .option('--fetch', 'fetch missing sizes from gyazo.com/<id>.json and store them')
-    .option('--max <number>', 'with --fetch, cap how many to fetch this run')
-    .option('--random', 'with --fetch, sample ids at random to estimate the population total')
+    .option('--max <number>', 'cap how many images to fetch/sample this run')
+    .option('--random', 'sample ids at random (fetching their sizes) to grow the estimate')
     .option('--cookies <path>', 'cookies, so a withheld image returns a size too')
     .option('-j, --json', 'output as JSON')
     .action(async (options) => {
       // The population the estimate is about: every cached image.
       const populationN = countCache().images;
 
-      if (options.fetch) {
+      // --random implies fetching: to grow the random sample it has to get the
+      // sizes of the ids it draws.
+      if (options.fetch || options.random) {
         const max = options.max
           ? parsePositiveIntegerOption(options.max, '--max')
           : undefined;
