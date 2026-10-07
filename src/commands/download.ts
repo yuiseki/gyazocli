@@ -64,12 +64,21 @@ export function registerDownloadCommand(program: Command): void {
       let bytes = 0;
       let gone = 0;
       let failed = 0;
+      let differs = 0;
       let consecutive = 0;
       let aborted = false;
       let finished = 0;
-      const notes: string[] = [];
+      let noted = 0;
 
-      const record = (id: string, reason: string) => notes.push(`${id}\t${reason}`);
+      // Failures are written the moment they happen, not at the end: a run can
+      // last hours, and the reasons should be readable while it goes, and survive
+      // it being stopped.
+      const failuresFile = path.join(getCacheDir(), 'download-report.tsv');
+      fs.writeFileSync(failuresFile, '', 'utf-8');
+      const record = (id: string, reason: string) => {
+        noted += 1;
+        fs.appendFileSync(failuresFile, `${id}\t${reason}\n`, 'utf-8');
+      };
 
       const handle = async (item: (typeof items)[number]) => {
         try {
@@ -84,6 +93,12 @@ export function registerDownloadCommand(program: Command): void {
             downloaded += 1;
             bytes += result.bytes;
             consecutive = 0;
+            if (result.sizeDiffers) {
+              // Kept: the transfer was whole. But say so, since it is not what
+              // the record promised.
+              differs += 1;
+              record(item.id, `size differs from file_size: got ${result.bytes}, file_size ${result.sizeDiffers.expected} (kept)`);
+            }
           } else if (result.kind === 'gone') {
             // Every URL answered 404: the body is not there to be had. Not a
             // failure of this run, but not silent either.
@@ -120,15 +135,14 @@ export function registerDownloadCommand(program: Command): void {
       await Promise.all(Array.from({ length: Math.min(jobs, Math.max(items.length, 1)) }, worker));
       if (finished >= PROGRESS_EVERY) process.stderr.write('\n');
 
-      const failuresFile = path.join(getCacheDir(), 'download-failed.tsv');
-      if (notes.length > 0) fs.writeFileSync(failuresFile, notes.join('\n') + '\n', 'utf-8');
-      else fs.rmSync(failuresFile, { force: true });
+      if (noted === 0) fs.rmSync(failuresFile, { force: true });
 
       console.log(
         `Downloaded ${n(downloaded)} (${formatBytes(bytes)}), ${n(present)} already present, ` +
-          `${n(gone)} gone, ${n(failed)} failed.`,
+          `${n(gone)} gone, ${n(failed)} failed.` +
+          (differs > 0 ? ` ${n(differs)} differ from the recorded file_size (kept).` : ''),
       );
-      if (notes.length > 0) console.log(`Details in ${failuresFile}`);
+      if (noted > 0) console.log(`Details in ${failuresFile}`);
       if (aborted) {
         console.error(
           `Stopped after ${MAX_CONSECUTIVE_FAILURES} consecutive failures: the cookies may have ` +

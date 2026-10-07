@@ -22,6 +22,10 @@ interface Route {
   status?: number;
   body?: Buffer;
   ext: string;
+  /** Send no Content-Length (chunked), so the size cannot vouch for the body. */
+  chunked?: boolean;
+  /** Answer 200 with this content type instead of an image one. */
+  contentType?: string;
 }
 
 /**
@@ -46,7 +50,9 @@ function imageStub(routes: Record<string, Route>) {
       attempts[id] = (attempts[id] || 0) + 1;
       if (r.status && r.status !== 200 && attempts[id] <= (r.status === 503 ? 2 : 99)) { res.writeHead(r.status); res.end('x'); return; }
       const body = r.body ?? bodyOf(id);
-      res.writeHead(200, { 'content-type': `image/${ext}`, 'content-length': String(body.length) });
+      const headers: Record<string, string> = { 'content-type': r.contentType || `image/${ext}` };
+      if (!r.chunked) headers['content-length'] = String(body.length);
+      res.writeHead(200, headers);
       res.end(body);
       return;
     }
@@ -149,7 +155,9 @@ test('with no usable url it falls back to the /raw redirect', async () => {
   }
 });
 
-test('a body whose size disagrees with file_size is discarded and reported', async () => {
+test('a complete body that disagrees with file_size is kept and noted', async () => {
+  // Gyazo's recorded file_size and the file it serves really do differ for some
+  // PNGs (both valid, same pixels). The transfer was whole, so the file is kept.
   const cacheDir = createTempCacheDir();
   const a = idOf(0xaa1);
   writeImageCache(cacheDir, a, record(a, { file_size: 100 }));
@@ -157,11 +165,46 @@ test('a body whose size disagrees with file_size is discarded and reported', asy
   const stub = await pending;
   try {
     const result = await run(cacheDir, stub);
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(imagePath(cacheDir, a, 'jpg'))).toEqual(bodyOf(a, 60));
+    expect(result.stdout).toMatch(/1 differ from the recorded file_size/);
+    expect(fs.readFileSync(path.join(cacheDir, 'download-report.tsv'), 'utf8')).toMatch(new RegExp(`${a}\\tsize differs`));
+  } finally {
+    await stub.close();
+  }
+});
+
+test('with no Content-Length, a size that disagrees with file_size is discarded as a failure', async () => {
+  // Chunked: nothing but file_size can say the body is whole, so a mismatch is
+  // treated as a damaged transfer.
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a, { file_size: 100 }));
+  const { stub: pending } = imageStub({ [a]: { public: true, ext: 'jpg', body: bodyOf(a, 60), chunked: true } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
     expect(result.status).toBe(1);
     expect(fs.existsSync(imagePath(cacheDir, a, 'jpg'))).toBe(false);
     expect(fs.existsSync(`${imagePath(cacheDir, a, 'jpg')}.part`)).toBe(false);
     expect(result.stdout).toMatch(/1 failed/);
-    expect(fs.readFileSync(path.join(cacheDir, 'download-failed.tsv'), 'utf8')).toContain(a);
+    expect(fs.readFileSync(path.join(cacheDir, 'download-report.tsv'), 'utf8')).toContain(a);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a 200 that is not an image (an error page) is a failure and saves nothing', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a));
+  const { stub: pending } = imageStub({ [a]: { public: true, ext: 'jpg', contentType: 'text/html', body: Buffer.from('<html>oops</html>') } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(1);
+    expect(fs.existsSync(imagePath(cacheDir, a, 'jpg'))).toBe(false);
+    expect(fs.readFileSync(path.join(cacheDir, 'download-report.tsv'), 'utf8')).toMatch(/content-type/i);
   } finally {
     await stub.close();
   }
@@ -193,7 +236,7 @@ test('an image that 404s everywhere is counted as gone, not as a failure', async
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/1 gone/);
     expect(result.stdout).toMatch(/0 failed/);
-    expect(fs.readFileSync(path.join(cacheDir, 'download-failed.tsv'), 'utf8')).toMatch(new RegExp(`${a}\\tgone`));
+    expect(fs.readFileSync(path.join(cacheDir, 'download-report.tsv'), 'utf8')).toMatch(new RegExp(`${a}\\tgone`));
   } finally {
     await stub.close();
   }

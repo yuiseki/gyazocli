@@ -315,7 +315,7 @@ const CONTENT_TYPE_EXTENSIONS: Record<string, string> = {
 };
 
 export type ImageBodyResult =
-  | { kind: 'ok'; path: string; bytes: number }
+  | { kind: 'ok'; path: string; bytes: number; sizeDiffers?: { expected: number } }
   | { kind: 'gone' }
   | { kind: 'mismatch'; got: number; expected: number };
 
@@ -411,6 +411,12 @@ export async function downloadImageBody(options: {
         }
 
         const contentType = String(response.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+        // A 200 can still be an error page. Only image/video bodies (or an
+        // unlabelled binary) are taken for one.
+        if (contentType && !/^(image|video)\//.test(contentType) && contentType !== 'application/octet-stream') {
+          response.data.destroy();
+          throw new Error(`unexpected content-type ${contentType} for ${current}`);
+        }
         const ext = options.ext || CONTENT_TYPE_EXTENSIONS[contentType] || 'bin';
         const finalPath = `${destBase}.${ext}`;
         const partPath = `${finalPath}.part`;
@@ -438,13 +444,27 @@ export async function downloadImageBody(options: {
           fs.rmSync(partPath, { force: true });
           throw new RetryableError(`truncated body (${received} of ${declared} bytes)`);
         }
+        // The body arrived whole whenever the server's own Content-Length agrees
+        // with what came in (checked above). Gyazo's recorded file_size can still
+        // differ from the file it serves -- for some PNGs both are valid with the
+        // same pixels, the recorded size being of a recompressed copy -- and
+        // throwing the file away for that would lose the capture. So a whole body
+        // is kept and the difference is reported. Only with no Content-Length is
+        // file_size the one thing that can vouch for the body, and then a
+        // disagreement means a damaged transfer.
         const expected = options.expectedBytes;
-        if (typeof expected === 'number' && expected > 0 && received !== expected) {
+        const differs = typeof expected === 'number' && expected > 0 && received !== expected;
+        if (differs && !declared) {
           fs.rmSync(partPath, { force: true });
-          return { kind: 'mismatch', got: received, expected };
+          return { kind: 'mismatch', got: received, expected: expected as number };
         }
         fs.renameSync(partPath, finalPath);
-        return { kind: 'ok', path: finalPath, bytes: received };
+        return {
+          kind: 'ok',
+          path: finalPath,
+          bytes: received,
+          sizeDiffers: differs ? { expected: expected as number } : undefined,
+        };
       });
 
       if (outcome === 'notfound') return 'notfound';
