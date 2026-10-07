@@ -133,6 +133,87 @@ export function sumCachedFileSizes(): FileSizeSummary {
   return { images, withSize, totalBytes };
 }
 
+export interface DownloadItem {
+  id: string;
+  /** Directory holding the record, so the body lands right next to its json. */
+  dir: string;
+  type: string | null;
+  /** The record's own body URL, when it has one. */
+  url: string | null;
+  fileSize: number | null;
+  createdAt: string;
+}
+
+/**
+ * Which cached records still lack their image body.
+ *
+ * The body sits beside the record as `<id>.<ext>`. Anything else beside it is not
+ * a body: the json itself, the `.m.`/`.s.` markers, and a `.part` left by an
+ * interrupted download. Directory listings alone answer "already have it", so a
+ * record is only read when its body is missing (or when a year/month filter has
+ * to know its created_at). `prefix` keeps records whose created_at starts with
+ * it, e.g. "2020" or "2020-07".
+ */
+export function planImageDownloads(prefix?: string): { present: number; items: DownloadItem[] } {
+  const root = path.join(getCacheDir(), 'images');
+  const items: DownloadItem[] = [];
+  let present = 0;
+  if (!fs.existsSync(root)) return { present, items };
+  const createdRe = /"created_at"\s*:\s*"([^"]*)"/;
+
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop() as string;
+    const names = fs.readdirSync(dir, { withFileTypes: true });
+    const jsonIds: string[] = [];
+    const withBody = new Set<string>();
+    for (const entry of names) {
+      if (entry.isDirectory()) {
+        stack.push(path.join(dir, entry.name));
+        continue;
+      }
+      const m = /^([0-9a-f]{32})\.(.+)$/.exec(entry.name);
+      if (!m) continue;
+      const rest = m[2];
+      if (rest === 'json') jsonIds.push(m[1]);
+      else if (!rest.endsWith('.part') && !/^(m|s)\./.test(rest)) withBody.add(m[1]);
+    }
+    for (const id of jsonIds.sort()) {
+      const have = withBody.has(id);
+      if (have && !prefix) {
+        present += 1;
+        continue;
+      }
+      let text: string;
+      try {
+        text = fs.readFileSync(path.join(dir, `${id}.json`), 'utf-8');
+      } catch {
+        continue;
+      }
+      if (prefix && !(createdRe.exec(text)?.[1] || '').startsWith(prefix)) continue;
+      if (have) {
+        present += 1;
+        continue;
+      }
+      let record: any;
+      try {
+        record = JSON.parse(text);
+      } catch {
+        continue;
+      }
+      items.push({
+        id,
+        dir,
+        type: typeof record?.type === 'string' && record.type ? record.type : null,
+        url: typeof record?.url === 'string' && record.url ? record.url : null,
+        fileSize: typeof record?.file_size === 'number' && record.file_size > 0 ? record.file_size : null,
+        createdAt: String(record?.created_at || ''),
+      });
+    }
+  }
+  return { present, items };
+}
+
 /** How much is in the local cache, by kind. Counts files; reads none of them. */
 export function countCache(): CacheCounts {
   const cacheDir = getCacheDir();

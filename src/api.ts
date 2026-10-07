@@ -1,4 +1,6 @@
 import axios from 'axios';
+import fs from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import FormData from 'form-data';
 import { config } from './config';
 
@@ -282,6 +284,181 @@ export async function fetchImagesSummary(
     { timezone },
     { Cookie: cookieHeader, 'X-Requested-With': 'XMLHttpRequest' },
   );
+}
+
+/**
+ * Where a capture's body can be fetched, best guess first.
+ *
+ * The record's own `url` is authoritative: a private (only_me) capture lives
+ * under i.gyazo.com/s/<id>.<ext> while a public one is at i.gyazo.com/<id>.<ext>,
+ * and only the record says which. Without it, the public path built from the
+ * type is the usual one, and gyazo.com/<id>/raw redirects to wherever the body
+ * really is, so it catches the rest.
+ */
+export function imageBodyCandidates(imageId: string, type?: string | null, url?: string | null): string[] {
+  const candidates: string[] = [];
+  if (url && /^https?:\/\//i.test(url)) candidates.push(url);
+  if (type) candidates.push(`${imageOrigin()}/${imageId}.${type}`);
+  candidates.push(`${webOrigin()}/${imageId}/raw`);
+  return Array.from(new Set(candidates));
+}
+
+const CONTENT_TYPE_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+  'image/svg+xml': 'svg',
+  'video/mp4': 'mp4',
+};
+
+export type ImageBodyResult =
+  | { kind: 'ok'; path: string; bytes: number }
+  | { kind: 'gone' }
+  | { kind: 'mismatch'; got: number; expected: number };
+
+/** What one attempt at one URL came to: a result, a miss, or a redirect to follow. */
+type AttemptOutcome = ImageBodyResult | 'notfound' | { redirect: string };
+
+class RetryableError extends Error {
+  constructor(message: string, readonly retryAfterMs = 0) {
+    super(message);
+  }
+}
+
+function isNetworkError(error: any): boolean {
+  return (
+    ['ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'EPIPE'].includes(error?.code) ||
+    /timeout|socket hang up|aborted|stalled/i.test(error?.message || '')
+  );
+}
+
+/** Retry `fn` with the same bounded, jittered exponential backoff the API calls use. */
+async function withBackoff<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      const retryable = error instanceof RetryableError || isNetworkError(error);
+      if (!retryable) throw error;
+      if (attempt >= MAX_RETRIES) {
+        throw new Error(`${label}: gave up after ${MAX_RETRIES} retries (${error.message})`);
+      }
+      const backoff = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** attempt);
+      await sleep(Math.max(error.retryAfterMs || 0, Math.round(Math.random() * backoff)));
+    }
+  }
+}
+
+/** The session cookie goes only to Gyazo's own hosts, never to wherever a redirect points. */
+function mayReceiveCookie(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  const known = [imageOrigin(), webOrigin(), apiOrigin()].map((origin) => new URL(origin).host);
+  return known.includes(parsed.host) || /(^|\.)gyazo\.com$/i.test(parsed.hostname);
+}
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * Fetch one capture's body to `<destBase>.<ext>`, trying each candidate URL until
+ * one has it. A 404 moves on to the next candidate; every candidate 404ing means
+ * the capture is gone. Bytes land in a `.part` file and are renamed into place
+ * only once they are complete and agree with `expectedBytes`, so a crash or a
+ * parallel run never leaves a half file under the real name.
+ */
+export async function downloadImageBody(options: {
+  candidates: string[];
+  destBase: string;
+  ext?: string | null;
+  expectedBytes?: number | null;
+  cookieHeader: string;
+}): Promise<ImageBodyResult> {
+  const { candidates, destBase, cookieHeader } = options;
+
+  const tryCandidate = async (start: string): Promise<ImageBodyResult | 'notfound'> => {
+    let current = start;
+    for (let hop = 0; hop <= 5; hop++) {
+      if (!mayReceiveCookie(current)) return 'notfound';
+      const outcome = await withBackoff<AttemptOutcome>(current, async () => {
+        const response = await axios.get(current, {
+          headers: { Cookie: cookieHeader },
+          responseType: 'stream',
+          maxRedirects: 0,
+          timeout: REQUEST_TIMEOUT_MS,
+          validateStatus: () => true,
+        });
+        const status = response.status;
+        if (status === 404) { response.data.destroy(); return 'notfound'; }
+        if (REDIRECT_STATUSES.has(status)) {
+          response.data.destroy();
+          return { redirect: new URL(String(response.headers.location), current).toString() };
+        }
+        if (status === 429 || status >= 500) {
+          response.data.destroy();
+          const retryAfter = (parseInt(String(response.headers['retry-after'] || '0'), 10) || 0) * 1000;
+          throw new RetryableError(`HTTP ${status}`, retryAfter);
+        }
+        if (status !== 200) {
+          response.data.destroy();
+          throw new Error(`HTTP ${status} for ${current}`);
+        }
+
+        const contentType = String(response.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+        const ext = options.ext || CONTENT_TYPE_EXTENSIONS[contentType] || 'bin';
+        const finalPath = `${destBase}.${ext}`;
+        const partPath = `${finalPath}.part`;
+
+        // A stalled body would otherwise hang a worker forever: the request
+        // timeout only covers the headers.
+        let last = Date.now();
+        let received = 0;
+        const stream = response.data;
+        stream.on('data', (chunk: Buffer) => { last = Date.now(); received += chunk.length; });
+        const watchdog = setInterval(() => {
+          if (Date.now() - last > REQUEST_TIMEOUT_MS) stream.destroy(new Error('stalled'));
+        }, Math.max(10, Math.floor(REQUEST_TIMEOUT_MS / 4)));
+        try {
+          await pipeline(stream, fs.createWriteStream(partPath));
+        } catch (error) {
+          fs.rmSync(partPath, { force: true });
+          throw error;
+        } finally {
+          clearInterval(watchdog);
+        }
+
+        const declared = Number(response.headers['content-length']);
+        if (declared && received !== declared) {
+          fs.rmSync(partPath, { force: true });
+          throw new RetryableError(`truncated body (${received} of ${declared} bytes)`);
+        }
+        const expected = options.expectedBytes;
+        if (typeof expected === 'number' && expected > 0 && received !== expected) {
+          fs.rmSync(partPath, { force: true });
+          return { kind: 'mismatch', got: received, expected };
+        }
+        fs.renameSync(partPath, finalPath);
+        return { kind: 'ok', path: finalPath, bytes: received };
+      });
+
+      if (outcome === 'notfound') return 'notfound';
+      if ('redirect' in outcome) { current = outcome.redirect; continue; }
+      return outcome;
+    }
+    throw new Error(`too many redirects from ${start}`);
+  };
+
+  for (const candidate of candidates) {
+    const result = await tryCandidate(candidate);
+    if (result !== 'notfound') return result;
+  }
+  return { kind: 'gone' };
 }
 
 export type RenditionFormat = 'webp' | 'jpeg';

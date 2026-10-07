@@ -5,23 +5,13 @@ import type { Command } from 'commander';
 import { ensureAccessToken } from '../credentials';
 import { buildStatsDateRange } from '../dates';
 import { parsePositiveIntegerOption } from '../options';
+import { formatBytes } from '../format';
 import {
   countCache,
   sumCachedFileSizes,
   sumCachedFileSizesFast,
 } from '../storage';
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB', 'TB', 'PB'];
-  let value = bytes / 1024;
-  let i = 0;
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024;
-    i += 1;
-  }
-  return `${value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 2)} ${units[i]}`;
-}
 import {
   warmDateCacheForApps,
   warmDateCacheForDomains,

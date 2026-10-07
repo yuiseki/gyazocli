@@ -1,0 +1,291 @@
+import { test, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createTempCacheDir, runCli, startStubServer, writeImageCache } from './helpers';
+
+const FAST_RETRY = { GYAZO_RETRY_BASE_MS: '1', GYAZO_RETRY_MAX_MS: '5' };
+
+function cookieFile(dir: string): string {
+  const file = path.join(dir, 'cookie.json');
+  fs.writeFileSync(file, JSON.stringify([{ name: 'Gyazo_session', value: 's', domain: '.gyazo.com' }]));
+  return file;
+}
+
+const idOf = (n: number) => n.toString(16).padStart(32, '0');
+const bodyOf = (id: string, size = 100) => Buffer.alloc(size, id.slice(-2));
+const imagePath = (dir: string, id: string, ext: string) => path.join(dir, 'images', id[0], id[1], `${id}.${ext}`);
+
+interface Route {
+  /** Serve this body on `/<id>.<ext>` (public) and/or `/s/<id>.<ext>` (private). */
+  public?: boolean;
+  private?: boolean;
+  status?: number;
+  body?: Buffer;
+  ext: string;
+}
+
+/**
+ * A stand-in for i.gyazo.com and gyazo.com/<id>/raw. Like the real one it wants
+ * the session cookie (503 without), serves public images at /<id>.<ext> and
+ * private ones under /s/, and redirects /<id>/raw to wherever the body lives.
+ */
+function imageStub(routes: Record<string, Route>) {
+  const hits: string[] = [];
+  const attempts: Record<string, number> = {};
+  const stub = startStubServer((req, res) => {
+    const url = new URL(req.url || '', 'http://127.0.0.1');
+    hits.push(url.pathname);
+    const hasCookie = String(req.headers.cookie || '').includes('Gyazo_session');
+    if (!hasCookie) { res.writeHead(503, { 'content-type': 'text/plain' }); res.end('no cookie'); return; }
+
+    let m = /^\/(s\/)?([0-9a-f]{32})\.(\w+)$/.exec(url.pathname);
+    if (m) {
+      const [, priv, id, ext] = m;
+      const r = routes[id];
+      if (!r || r.ext !== ext || (priv ? !r.private : !r.public)) { res.writeHead(404); res.end('nope'); return; }
+      attempts[id] = (attempts[id] || 0) + 1;
+      if (r.status && r.status !== 200 && attempts[id] <= (r.status === 503 ? 2 : 99)) { res.writeHead(r.status); res.end('x'); return; }
+      const body = r.body ?? bodyOf(id);
+      res.writeHead(200, { 'content-type': `image/${ext}`, 'content-length': String(body.length) });
+      res.end(body);
+      return;
+    }
+    m = /^\/([0-9a-f]{32})\/raw$/.exec(url.pathname);
+    if (m) {
+      const r = routes[m[1]];
+      if (!r) { res.writeHead(404); res.end('nope'); return; }
+      const target = r.private ? `/s/${m[1]}.${r.ext}` : `/${m[1]}.${r.ext}`;
+      res.writeHead(301, { location: target });
+      res.end();
+      return;
+    }
+    res.writeHead(404); res.end('{}');
+  });
+  return { stub, hits };
+}
+
+function record(id: string, extra: Record<string, unknown> = {}) {
+  return { image_id: id, type: 'jpg', created_at: '2026-08-30T00:00:00.000Z', file_size: 100, ...extra };
+}
+
+async function run(cacheDir: string, stub: { origin: string }, args: string[] = []) {
+  return runCli(cacheDir, ['download', ...args], {
+    webOrigin: stub.origin,
+    cookieFile: cookieFile(cacheDir),
+    env: { GYAZO_IMAGE_ORIGIN: stub.origin, ...FAST_RETRY },
+  });
+}
+
+test('download puts the image body next to the json, named by its type', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  const b = idOf(0xbb2);
+  writeImageCache(cacheDir, a, record(a, { type: 'jpg' }));
+  writeImageCache(cacheDir, b, record(b, { type: 'png' }));
+  const { stub: pending, hits } = imageStub({ [a]: { public: true, ext: 'jpg' }, [b]: { public: true, ext: 'png' } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(imagePath(cacheDir, a, 'jpg'))).toEqual(bodyOf(a));
+    expect(fs.readFileSync(imagePath(cacheDir, b, 'png'))).toEqual(bodyOf(b));
+    expect(fs.existsSync(path.join(path.dirname(imagePath(cacheDir, a, 'jpg')), `${a}.json`))).toBe(true);
+    expect(result.stdout).toMatch(/Downloaded 2/);
+    expect(hits.length).toBe(2);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('download is idempotent: a second run fetches nothing', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a));
+  const { stub: pending, hits } = imageStub({ [a]: { public: true, ext: 'jpg' } });
+  const stub = await pending;
+  try {
+    await run(cacheDir, stub);
+    hits.length = 0;
+    const second = await run(cacheDir, stub);
+    expect(second.status).toBe(0);
+    expect(hits).toHaveLength(0);
+    expect(second.stdout).toMatch(/Downloaded 0/);
+    expect(second.stdout).toMatch(/1 already present/);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a private image is found through the url in its json', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  const { stub: pending } = imageStub({ [a]: { private: true, ext: 'jpg' } });
+  const stub = await pending;
+  try {
+    writeImageCache(cacheDir, a, record(a, { access_policy: 'only_me', url: `${stub.origin}/s/${a}.jpg` }));
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(imagePath(cacheDir, a, 'jpg'))).toEqual(bodyOf(a));
+  } finally {
+    await stub.close();
+  }
+});
+
+test('with no usable url it falls back to the /raw redirect', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  // Private, and the json carries no url: the public path 404s, /raw redirects to /s/.
+  writeImageCache(cacheDir, a, record(a, { access_policy: 'only_me' }));
+  const { stub: pending, hits } = imageStub({ [a]: { private: true, ext: 'jpg' } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(imagePath(cacheDir, a, 'jpg'))).toEqual(bodyOf(a));
+    expect(hits).toContain(`/${a}/raw`);
+    expect(hits).toContain(`/s/${a}.jpg`);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a body whose size disagrees with file_size is discarded and reported', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a, { file_size: 100 }));
+  const { stub: pending } = imageStub({ [a]: { public: true, ext: 'jpg', body: bodyOf(a, 60) } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(1);
+    expect(fs.existsSync(imagePath(cacheDir, a, 'jpg'))).toBe(false);
+    expect(fs.existsSync(`${imagePath(cacheDir, a, 'jpg')}.part`)).toBe(false);
+    expect(result.stdout).toMatch(/1 failed/);
+    expect(fs.readFileSync(path.join(cacheDir, 'download-failed.tsv'), 'utf8')).toContain(a);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a transient 503 is retried and then succeeds', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a));
+  const { stub: pending } = imageStub({ [a]: { public: true, ext: 'jpg', status: 503 } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(imagePath(cacheDir, a, 'jpg'))).toEqual(bodyOf(a));
+  } finally {
+    await stub.close();
+  }
+});
+
+test('an image that 404s everywhere is counted as gone, not as a failure', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a));
+  const { stub: pending } = imageStub({}); // knows nothing about it
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/1 gone/);
+    expect(result.stdout).toMatch(/0 failed/);
+    expect(fs.readFileSync(path.join(cacheDir, 'download-failed.tsv'), 'utf8')).toMatch(new RegExp(`${a}\\tgone`));
+  } finally {
+    await stub.close();
+  }
+});
+
+test('--max, --year and --month narrow what is fetched', async () => {
+  const cacheDir = createTempCacheDir();
+  const ids = [idOf(0x11), idOf(0x22), idOf(0x33)];
+  writeImageCache(cacheDir, ids[0], record(ids[0], { created_at: '2020-07-01T00:00:00.000Z' }));
+  writeImageCache(cacheDir, ids[1], record(ids[1], { created_at: '2020-08-01T00:00:00.000Z' }));
+  writeImageCache(cacheDir, ids[2], record(ids[2], { created_at: '2024-01-01T00:00:00.000Z' }));
+  const routes: Record<string, Route> = {};
+  for (const id of ids) routes[id] = { public: true, ext: 'jpg' };
+  const { stub: pending } = imageStub(routes);
+  const stub = await pending;
+  try {
+    const month = await run(cacheDir, stub, ['--month', '2020-08']);
+    expect(month.status).toBe(0);
+    expect(fs.existsSync(imagePath(cacheDir, ids[1], 'jpg'))).toBe(true);
+    expect(fs.existsSync(imagePath(cacheDir, ids[0], 'jpg'))).toBe(false);
+
+    const year = await run(cacheDir, stub, ['--year', '2020']);
+    expect(year.status).toBe(0);
+    expect(fs.existsSync(imagePath(cacheDir, ids[0], 'jpg'))).toBe(true);
+    expect(fs.existsSync(imagePath(cacheDir, ids[2], 'jpg'))).toBe(false); // 2024 untouched
+
+    const capped = await run(cacheDir, stub, ['--max', '1']);
+    expect(capped.status).toBe(0);
+    const have = ids.filter((id) => fs.existsSync(imagePath(cacheDir, id, 'jpg'))).length;
+    expect(have).toBe(3); // the one left over was fetched, capped at 1 this run
+  } finally {
+    await stub.close();
+  }
+});
+
+test('--dry-run reports what would be fetched and fetches nothing', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  const b = idOf(0xbb2);
+  writeImageCache(cacheDir, a, record(a, { file_size: 1000 }));
+  writeImageCache(cacheDir, b, record(b, { file_size: 2000 }));
+  const { stub: pending, hits } = imageStub({ [a]: { public: true, ext: 'jpg' }, [b]: { public: true, ext: 'jpg' } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub, ['--dry-run']);
+    expect(result.status).toBe(0);
+    expect(hits).toHaveLength(0);
+    expect(result.stdout).toMatch(/2 to download/);
+    expect(result.stdout).toMatch(/3,000 bytes/);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('download without cookies refuses and sends nothing', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a));
+  const { stub: pending, hits } = imageStub({ [a]: { public: true, ext: 'jpg' } });
+  const stub = await pending;
+  try {
+    const result = await runCli(cacheDir, ['download'], {
+      webOrigin: stub.origin,
+      cookieFile: path.join(cacheDir, 'absent.json'),
+      env: { GYAZO_IMAGE_ORIGIN: stub.origin, ...FAST_RETRY },
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/cookie/i);
+    expect(hits).toHaveLength(0);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a run of consecutive failures stops early instead of hammering', async () => {
+  const cacheDir = createTempCacheDir();
+  const ids = Array.from({ length: 40 }, (_, i) => idOf(0x1000 + i));
+  const routes: Record<string, Route> = {};
+  for (const id of ids) {
+    writeImageCache(cacheDir, id, record(id));
+    routes[id] = { public: true, ext: 'jpg', status: 500 }; // always 500
+  }
+  const { stub: pending, hits } = imageStub(routes);
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub, ['--jobs', '1']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/consecutive/i);
+    // Stopped well before trying all 40 images.
+    const tried = new Set(hits.filter((h) => h.endsWith('.jpg'))).size;
+    expect(tried).toBeLessThan(40);
+  } finally {
+    await stub.close();
+  }
+});
