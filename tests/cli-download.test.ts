@@ -226,7 +226,7 @@ test('a 200 that is not an image (an error page) is a failure and saves nothing'
   }
 });
 
-test('a video-only capture (has_mp4, no gif) is fetched as its mp4 and is not gone', async () => {
+test('a capture with no gif but an mp4 falls back to the mp4 and is not gone', async () => {
   // Gyazo keeps some recordings only as mp4: the record says type gif, file_size 0,
   // has_mp4. There is no gif to find, so asking for one would call it gone.
   const cacheDir = createTempCacheDir();
@@ -240,9 +240,65 @@ test('a video-only capture (has_mp4, no gif) is fetched as its mp4 and is not go
     expect(result.status).toBe(0);
     expect(fs.readFileSync(imagePath(cacheDir, a, 'mp4'))).toEqual(video);
     expect(fs.existsSync(imagePath(cacheDir, a, 'gif'))).toBe(false);
-    expect(hits).not.toContain(`/${a}.gif`);
+    // The gif is asked for first (a recorded file_size of 0 does not mean there is
+    // none), and the mp4 is the fallback once every gif URL has 404ed.
+    expect(hits).toContain(`/${a}.gif`);
     expect(result.stdout).toMatch(/Downloaded 1/);
     expect(result.stdout).toMatch(/0 gone/);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('has_mp4 with file_size 0 does not mean there is no gif: the gif is fetched when it exists', async () => {
+  // 36 of 40 such records had a real gif on Gyazo. Assuming none lost them.
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a, { type: 'gif', file_size: 0, has_mp4: true }));
+  const video = Buffer.alloc(300, 7);
+  const { stub: pending, hits } = imageStub({ [a]: { public: true, ext: 'gif', mp4: video } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(imagePath(cacheDir, a, 'gif'))).toEqual(bodyOf(a));
+    expect(fs.existsSync(imagePath(cacheDir, a, 'mp4'))).toBe(false); // not needed: the gif is the body
+    expect(hits).not.toContain(`/${a}.mp4`);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a record that has only its mp4 on disk gets its gif on a re-run when the gif exists', async () => {
+  // The repair path for captures an earlier run saved as mp4 only.
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a, { type: 'gif', file_size: 0, has_mp4: true }));
+  fs.writeFileSync(imagePath(cacheDir, a, 'mp4'), Buffer.alloc(300, 7));
+  const { stub: pending, hits } = imageStub({ [a]: { public: true, ext: 'gif', mp4: Buffer.alloc(300, 7) } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(imagePath(cacheDir, a, 'gif'))).toEqual(bodyOf(a));
+    expect(hits).not.toContain(`/${a}.mp4`); // already had it
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a record with an mp4 on disk and no gif anywhere is settled by the mp4, not gone', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a, { type: 'gif', file_size: 0, has_mp4: true }));
+  fs.writeFileSync(imagePath(cacheDir, a, 'mp4'), Buffer.alloc(300, 7));
+  const { stub: pending } = imageStub({}); // no gif on the server
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/0 gone/);
+    expect(result.stdout).toMatch(/1 already present/);
   } finally {
     await stub.close();
   }

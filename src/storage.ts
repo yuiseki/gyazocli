@@ -142,10 +142,14 @@ export interface DownloadItem {
   url: string | null;
   fileSize: number | null;
   createdAt: string;
-  /** The image/gif body is still missing (and this record is expected to have one). */
+  /** The image/gif body is still missing. */
   needBody: boolean;
-  /** The mp4 is still missing and wanted: always for a video-only record, else only with withMp4. */
+  /** The mp4 is wanted as well (a gif's derivative), which only --mp4 asks for. */
   needMp4: boolean;
+  /** The record says it has an mp4. */
+  hasMp4: boolean;
+  /** An mp4 is already on disk beside the record. */
+  haveMp4: boolean;
   /** The record's own mp4 URL, when it has one. */
   mp4Url: string | null;
 }
@@ -160,11 +164,11 @@ export interface DownloadItem {
  * to know its created_at). `prefix` keeps records whose created_at starts with
  * it, e.g. "2020" or "2020-07".
  *
- * Gyazo keeps some recordings only as mp4: the record says type gif, file_size 0
- * and has_mp4, and there is no gif to fetch. For those the mp4 IS the body, so it
- * is always wanted and no gif is expected. A gif that also has an mp4 variant is a
- * different matter: the variant is a derivative of a body already in hand, so it
- * is only fetched when `withMp4` asks for it.
+ * A record that says has_mp4 can have its body as a gif, as an mp4 only, or both,
+ * and its recorded file_size cannot tell which: 0 appears for captures whose gif
+ * exists (36 of 40 such records that had been saved as mp4 only did have one).
+ * So the body is always asked for first. The mp4 stands in for it only when every
+ * gif URL 404s, and is otherwise a derivative fetched only when `withMp4` asks.
  */
 export function planImageDownloads(
   prefix?: string,
@@ -231,9 +235,8 @@ export function planImageDownloads(
       const fileSize = typeof record?.file_size === 'number' && record.file_size > 0 ? record.file_size : null;
       const mp4Url = typeof record?.mp4_url === 'string' && record.mp4_url ? record.mp4_url : null;
       const hasMp4 = record?.has_mp4 === true || mp4Url !== null;
-      const videoOnly = hasMp4 && fileSize === null;
-      const needBody = !videoOnly && !haveBody;
-      const needMp4 = hasMp4 && !haveMp4 && (videoOnly || Boolean(options.withMp4));
+      const needBody = !haveBody;
+      const needMp4 = hasMp4 && !haveMp4 && Boolean(options.withMp4);
       if (!needBody && !needMp4) {
         present += 1;
         continue;
@@ -247,6 +250,8 @@ export function planImageDownloads(
         createdAt: String(record?.created_at || ''),
         needBody,
         needMp4,
+        hasMp4,
+        haveMp4,
         mp4Url,
       });
     }

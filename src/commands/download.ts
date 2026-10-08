@@ -74,6 +74,7 @@ export function registerDownloadCommand(program: Command): void {
       let finished = 0;
       let noted = 0;
       let lateSkipped = 0;
+      let viaMp4 = 0;
 
       // Notes are written the moment they happen, not at the end: a run can last
       // hours, and the reasons should be readable while it goes, and survive it
@@ -91,12 +92,17 @@ export function registerDownloadCommand(program: Command): void {
         fs.appendFileSync(failuresFile, `${id}\t${reason}\n`, 'utf-8');
       };
 
-      /** Fetch one file and fold its outcome into the counters. */
-      const fetchOne = async (
+      type Attempt = { outcome: 'ok' | 'gone' | 'failed'; goneNote?: string };
+
+      /**
+       * Fetch one file. An ok or a failure is counted here; a gone is only
+       * reported back, since whether it is lost depends on what else the capture
+       * has (a gif that 404s is fine if its mp4 is there).
+       */
+      const attempt = async (
         id: string,
-        label: string,
         args: Parameters<typeof downloadImageBody>[0],
-      ): Promise<'ok' | 'gone' | 'failed'> => {
+      ): Promise<Attempt> => {
         try {
           const result = await downloadImageBody(args);
           if (result.kind === 'ok') {
@@ -109,66 +115,88 @@ export function registerDownloadCommand(program: Command): void {
               differs += 1;
               record(id, `size differs from file_size: got ${result.bytes}, file_size ${result.sizeDiffers.expected} (kept)`);
             }
-            return 'ok';
+            return { outcome: 'ok' };
           }
-          if (result.kind === 'gone') {
-            // Every URL answered 404: the body is not there to be had. Not a
-            // failure of this run, but not silent either.
-            gone += 1;
-            record(id, `gone${label}`);
-            return 'gone';
-          }
+          if (result.kind === 'gone') return { outcome: 'gone' };
           failed += 1;
           consecutive += 1;
           record(id, `size mismatch: got ${result.got}, expected ${result.expected}`);
-          return 'failed';
+          return { outcome: 'failed' };
         } catch (error: any) {
           const reason = (error?.message || 'error').replace(/\s+/g, ' ');
           // A body that 5xxs through every retry is either an outage or a deleted
           // capture (Gyazo answers 503 for those, not 404). Its metadata says
           // which: still there means a real failure, a 404 means deleted.
           if (/HTTP 5\d\d/.test(reason) && (await captureMetadataMissing(id, cookieHeader))) {
-            gone += 1;
-            record(id, `gone${label} (deleted: its metadata 404s too)`);
-            return 'gone';
+            return { outcome: 'gone', goneNote: 'deleted: its metadata 404s too' };
           }
           failed += 1;
           consecutive += 1;
           record(id, reason);
-          return 'failed';
+          return { outcome: 'failed' };
         }
       };
 
+      const markGone = (id: string, label: string, note?: string) => {
+        gone += 1;
+        record(id, `gone${label}${note ? ` (${note})` : ''}`);
+      };
+
       const handle = async (item: (typeof items)[number]) => {
+        const dest = path.join(item.dir, item.id);
         // Another run may have fetched it since the plan was made (the long batch
         // and a targeted slice overlap): look again just before asking Gyazo.
-        if (item.needBody && item.type && fs.existsSync(path.join(item.dir, `${item.id}.${item.type}`))) {
+        if (item.needBody && item.type && fs.existsSync(`${dest}.${item.type}`)) {
           lateSkipped += 1;
           item = { ...item, needBody: false };
         }
-        if (item.needMp4 && fs.existsSync(path.join(item.dir, `${item.id}.mp4`))) {
+        const haveMp4 = item.haveMp4 || fs.existsSync(`${dest}.mp4`);
+        if (item.needMp4 && haveMp4) {
           lateSkipped += 1;
           item = { ...item, needMp4: false };
         }
+
+        // The body first. A has_mp4 record's recorded file_size is no guide to
+        // whether its gif exists, so the gif is always tried.
+        let primary: Attempt | null = null;
         if (item.needBody) {
-          await fetchOne(item.id, '', {
+          primary = await attempt(item.id, {
             candidates: imageBodyCandidates(item.id, item.type, item.url),
-            destBase: path.join(item.dir, item.id),
+            destBase: dest,
             ext: item.type,
             expectedBytes: item.fileSize,
             cookieHeader,
           });
         }
-        if (item.needMp4) {
+
+        // The mp4: as the derivative --mp4 asks for, or as the body itself when the
+        // gif turned out not to exist.
+        const standIn = primary?.outcome === 'gone' && item.hasMp4;
+        let mp4: Attempt | null = null;
+        if ((item.needMp4 || standIn) && !haveMp4) {
           // No file_size to check an mp4 against: the server's Content-Length has
           // to agree with what arrived, which downloadImageBody already insists on.
-          await fetchOne(item.id, ' (mp4)', {
+          mp4 = await attempt(item.id, {
             candidates: imageMp4Candidates(item.id, item.mp4Url),
-            destBase: path.join(item.dir, item.id),
+            destBase: dest,
             ext: 'mp4',
             expectedBytes: null,
             cookieHeader,
           });
+        }
+
+        if (primary?.outcome === 'gone') {
+          if (standIn && (haveMp4 || mp4?.outcome === 'ok')) {
+            if (haveMp4 && !mp4) viaMp4 += 1; // settled by an mp4 already on disk
+          } else if (standIn && mp4?.outcome === 'gone') {
+            markGone(item.id, '', 'no gif and no mp4');
+          } else if (!standIn) {
+            markGone(item.id, '', primary.goneNote);
+          }
+          // (a stand-in mp4 that failed is already counted as a failure)
+        }
+        if (mp4?.outcome === 'gone' && primary?.outcome !== 'gone') {
+          markGone(item.id, ' (mp4)', mp4.goneNote);
         }
         finished += 1;
         if (finished % PROGRESS_EVERY === 0) {
@@ -193,7 +221,7 @@ export function registerDownloadCommand(program: Command): void {
 
 
       console.log(
-        `Downloaded ${n(downloaded)} (${formatBytes(bytes)}), ${n(present + lateSkipped)} already present, ` +
+        `Downloaded ${n(downloaded)} (${formatBytes(bytes)}), ${n(present + lateSkipped + viaMp4)} already present, ` +
           `${n(gone)} gone, ${n(failed)} failed.` +
           (differs > 0 ? ` ${n(differs)} differ from the recorded file_size (kept).` : ''),
       );
