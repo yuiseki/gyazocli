@@ -26,6 +26,8 @@ interface Route {
   chunked?: boolean;
   /** Answer 200 with this content type instead of an image one. */
   contentType?: string;
+  /** Serve this video on `/<id>.mp4`. */
+  mp4?: Buffer;
 }
 
 /**
@@ -46,6 +48,12 @@ function imageStub(routes: Record<string, Route>) {
     if (m) {
       const [, priv, id, ext] = m;
       const r = routes[id];
+      if (ext === 'mp4') {
+        if (!r || !r.mp4) { res.writeHead(404); res.end('nope'); return; }
+        res.writeHead(200, { 'content-type': 'video/mp4', 'content-length': String(r.mp4.length) });
+        res.end(r.mp4);
+        return;
+      }
       if (!r || r.ext !== ext || (priv ? !r.private : !r.public)) { res.writeHead(404); res.end('nope'); return; }
       attempts[id] = (attempts[id] || 0) + 1;
       if (r.status && r.status !== 200 && attempts[id] <= (r.status === 503 ? 2 : 99)) { res.writeHead(r.status); res.end('x'); return; }
@@ -205,6 +213,67 @@ test('a 200 that is not an image (an error page) is a failure and saves nothing'
     expect(result.status).toBe(1);
     expect(fs.existsSync(imagePath(cacheDir, a, 'jpg'))).toBe(false);
     expect(fs.readFileSync(path.join(cacheDir, 'download-report.tsv'), 'utf8')).toMatch(/content-type/i);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a video-only capture (has_mp4, no gif) is fetched as its mp4 and is not gone', async () => {
+  // Gyazo keeps some recordings only as mp4: the record says type gif, file_size 0,
+  // has_mp4. There is no gif to find, so asking for one would call it gone.
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a, { type: 'gif', file_size: 0, has_mp4: true }));
+  const video = Buffer.alloc(300, 7);
+  const { stub: pending, hits } = imageStub({ [a]: { ext: 'gif', mp4: video } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(imagePath(cacheDir, a, 'mp4'))).toEqual(video);
+    expect(fs.existsSync(imagePath(cacheDir, a, 'gif'))).toBe(false);
+    expect(hits).not.toContain(`/${a}.gif`);
+    expect(result.stdout).toMatch(/Downloaded 1/);
+    expect(result.stdout).toMatch(/0 gone/);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a video-only capture whose mp4 is missing is gone', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a, { type: 'gif', file_size: 0, has_mp4: true }));
+  const { stub: pending } = imageStub({});
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/1 gone/);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a gif that also has an mp4 gets the mp4 only with --mp4', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a, { type: 'gif', file_size: 100, has_mp4: true }));
+  const video = Buffer.alloc(300, 9);
+  const { stub: pending, hits } = imageStub({ [a]: { public: true, ext: 'gif', mp4: video } });
+  const stub = await pending;
+  try {
+    const plain = await run(cacheDir, stub);
+    expect(plain.status).toBe(0);
+    expect(fs.existsSync(imagePath(cacheDir, a, 'gif'))).toBe(true);
+    expect(fs.existsSync(imagePath(cacheDir, a, 'mp4'))).toBe(false); // a derivative: not asked for
+    expect(hits).not.toContain(`/${a}.mp4`);
+
+    hits.length = 0;
+    const withMp4 = await run(cacheDir, stub, ['--mp4']);
+    expect(withMp4.status).toBe(0);
+    expect(fs.readFileSync(imagePath(cacheDir, a, 'mp4'))).toEqual(video);
+    expect(hits).not.toContain(`/${a}.gif`); // the gif was already there
   } finally {
     await stub.close();
   }

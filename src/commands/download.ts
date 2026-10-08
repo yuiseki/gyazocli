@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Command } from 'commander';
-import { downloadImageBody, imageBodyCandidates } from '../api';
+import { downloadImageBody, imageBodyCandidates, imageMp4Candidates } from '../api';
 import { loadCookieHeader } from '../cookies';
 import { formatBytes } from '../format';
 import { parsePositiveIntegerOption } from '../options';
@@ -29,6 +29,7 @@ export function registerDownloadCommand(program: Command): void {
     .option('--max <number>', 'stop after fetching this many images')
     .option('--year <yyyy>', 'only images created in this year')
     .option('--month <yyyy-mm>', 'only images created in this month')
+    .option('--mp4', 'also fetch the mp4 of a gif that has one (a video-only capture always gets its mp4)')
     .option('--dry-run', 'count what would be fetched, fetch nothing')
     .option('--cookies <path>', 'gyazo.com cookies')
     .action(async (options) => {
@@ -46,7 +47,7 @@ export function registerDownloadCommand(program: Command): void {
       }
       const prefix: string | undefined = options.month || options.year || undefined;
 
-      const { present, items: planned } = planImageDownloads(prefix);
+      const { present, items: planned } = planImageDownloads(prefix, { withMp4: Boolean(options.mp4) });
       const items = max ? planned.slice(0, max) : planned;
       const n = (v: number) => v.toLocaleString('en-US');
 
@@ -80,15 +81,14 @@ export function registerDownloadCommand(program: Command): void {
         fs.appendFileSync(failuresFile, `${id}\t${reason}\n`, 'utf-8');
       };
 
-      const handle = async (item: (typeof items)[number]) => {
+      /** Fetch one file and fold its outcome into the counters. */
+      const fetchOne = async (
+        id: string,
+        label: string,
+        args: Parameters<typeof downloadImageBody>[0],
+      ): Promise<'ok' | 'gone' | 'failed'> => {
         try {
-          const result = await downloadImageBody({
-            candidates: imageBodyCandidates(item.id, item.type, item.url),
-            destBase: path.join(item.dir, item.id),
-            ext: item.type,
-            expectedBytes: item.fileSize,
-            cookieHeader,
-          });
+          const result = await downloadImageBody(args);
           if (result.kind === 'ok') {
             downloaded += 1;
             bytes += result.bytes;
@@ -97,22 +97,49 @@ export function registerDownloadCommand(program: Command): void {
               // Kept: the transfer was whole. But say so, since it is not what
               // the record promised.
               differs += 1;
-              record(item.id, `size differs from file_size: got ${result.bytes}, file_size ${result.sizeDiffers.expected} (kept)`);
+              record(id, `size differs from file_size: got ${result.bytes}, file_size ${result.sizeDiffers.expected} (kept)`);
             }
-          } else if (result.kind === 'gone') {
+            return 'ok';
+          }
+          if (result.kind === 'gone') {
             // Every URL answered 404: the body is not there to be had. Not a
             // failure of this run, but not silent either.
             gone += 1;
-            record(item.id, 'gone');
-          } else {
-            failed += 1;
-            consecutive += 1;
-            record(item.id, `size mismatch: got ${result.got}, expected ${result.expected}`);
+            record(id, `gone${label}`);
+            return 'gone';
           }
+          failed += 1;
+          consecutive += 1;
+          record(id, `size mismatch: got ${result.got}, expected ${result.expected}`);
+          return 'failed';
         } catch (error: any) {
           failed += 1;
           consecutive += 1;
-          record(item.id, (error?.message || 'error').replace(/\s+/g, ' '));
+          record(id, (error?.message || 'error').replace(/\s+/g, ' '));
+          return 'failed';
+        }
+      };
+
+      const handle = async (item: (typeof items)[number]) => {
+        if (item.needBody) {
+          await fetchOne(item.id, '', {
+            candidates: imageBodyCandidates(item.id, item.type, item.url),
+            destBase: path.join(item.dir, item.id),
+            ext: item.type,
+            expectedBytes: item.fileSize,
+            cookieHeader,
+          });
+        }
+        if (item.needMp4) {
+          // No file_size to check an mp4 against: the server's Content-Length has
+          // to agree with what arrived, which downloadImageBody already insists on.
+          await fetchOne(item.id, ' (mp4)', {
+            candidates: imageMp4Candidates(item.id, item.mp4Url),
+            destBase: path.join(item.dir, item.id),
+            ext: 'mp4',
+            expectedBytes: null,
+            cookieHeader,
+          });
         }
         finished += 1;
         if (finished % PROGRESS_EVERY === 0) {

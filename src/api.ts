@@ -303,6 +303,14 @@ export function imageBodyCandidates(imageId: string, type?: string | null, url?:
   return Array.from(new Set(candidates));
 }
 
+/** Where a capture's mp4 can be fetched: the record's own url, else the usual path. */
+export function imageMp4Candidates(imageId: string, mp4Url?: string | null): string[] {
+  const candidates: string[] = [];
+  if (mp4Url && /^https?:\/\//i.test(mp4Url)) candidates.push(mp4Url);
+  candidates.push(`${imageOrigin()}/${imageId}.mp4`);
+  return Array.from(new Set(candidates));
+}
+
 const CONTENT_TYPE_EXTENSIONS: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',

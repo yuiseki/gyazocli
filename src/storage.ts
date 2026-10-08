@@ -142,6 +142,12 @@ export interface DownloadItem {
   url: string | null;
   fileSize: number | null;
   createdAt: string;
+  /** The image/gif body is still missing (and this record is expected to have one). */
+  needBody: boolean;
+  /** The mp4 is still missing and wanted: always for a video-only record, else only with withMp4. */
+  needMp4: boolean;
+  /** The record's own mp4 URL, when it has one. */
+  mp4Url: string | null;
 }
 
 /**
@@ -153,8 +159,17 @@ export interface DownloadItem {
  * record is only read when its body is missing (or when a year/month filter has
  * to know its created_at). `prefix` keeps records whose created_at starts with
  * it, e.g. "2020" or "2020-07".
+ *
+ * Gyazo keeps some recordings only as mp4: the record says type gif, file_size 0
+ * and has_mp4, and there is no gif to fetch. For those the mp4 IS the body, so it
+ * is always wanted and no gif is expected. A gif that also has an mp4 variant is a
+ * different matter: the variant is a derivative of a body already in hand, so it
+ * is only fetched when `withMp4` asks for it.
  */
-export function planImageDownloads(prefix?: string): { present: number; items: DownloadItem[] } {
+export function planImageDownloads(
+  prefix?: string,
+  options: { withMp4?: boolean } = {},
+): { present: number; items: DownloadItem[] } {
   const root = path.join(getCacheDir(), 'images');
   const items: DownloadItem[] = [];
   let present = 0;
@@ -167,6 +182,7 @@ export function planImageDownloads(prefix?: string): { present: number; items: D
     const names = fs.readdirSync(dir, { withFileTypes: true });
     const jsonIds: string[] = [];
     const withBody = new Set<string>();
+    const withMp4File = new Set<string>();
     for (const entry of names) {
       if (entry.isDirectory()) {
         stack.push(path.join(dir, entry.name));
@@ -176,11 +192,15 @@ export function planImageDownloads(prefix?: string): { present: number; items: D
       if (!m) continue;
       const rest = m[2];
       if (rest === 'json') jsonIds.push(m[1]);
+      else if (rest === 'mp4') withMp4File.add(m[1]);
       else if (!rest.endsWith('.part') && !/^(m|s)\./.test(rest)) withBody.add(m[1]);
     }
     for (const id of jsonIds.sort()) {
-      const have = withBody.has(id);
-      if (have && !prefix) {
+      const haveBody = withBody.has(id);
+      const haveMp4 = withMp4File.has(id);
+      // Without --mp4 a body already beside the record settles it from the listing
+      // alone: no record is opened.
+      if (haveBody && !prefix && !options.withMp4) {
         present += 1;
         continue;
       }
@@ -191,14 +211,20 @@ export function planImageDownloads(prefix?: string): { present: number; items: D
         continue;
       }
       if (prefix && !(createdRe.exec(text)?.[1] || '').startsWith(prefix)) continue;
-      if (have) {
-        present += 1;
-        continue;
-      }
       let record: any;
       try {
         record = JSON.parse(text);
       } catch {
+        continue;
+      }
+      const fileSize = typeof record?.file_size === 'number' && record.file_size > 0 ? record.file_size : null;
+      const mp4Url = typeof record?.mp4_url === 'string' && record.mp4_url ? record.mp4_url : null;
+      const hasMp4 = record?.has_mp4 === true || mp4Url !== null;
+      const videoOnly = hasMp4 && fileSize === null;
+      const needBody = !videoOnly && !haveBody;
+      const needMp4 = hasMp4 && !haveMp4 && (videoOnly || Boolean(options.withMp4));
+      if (!needBody && !needMp4) {
+        present += 1;
         continue;
       }
       items.push({
@@ -206,8 +232,11 @@ export function planImageDownloads(prefix?: string): { present: number; items: D
         dir,
         type: typeof record?.type === 'string' && record.type ? record.type : null,
         url: typeof record?.url === 'string' && record.url ? record.url : null,
-        fileSize: typeof record?.file_size === 'number' && record.file_size > 0 ? record.file_size : null,
+        fileSize,
         createdAt: String(record?.created_at || ''),
+        needBody,
+        needMp4,
+        mp4Url,
       });
     }
   }
