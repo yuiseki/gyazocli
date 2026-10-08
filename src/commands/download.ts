@@ -47,7 +47,10 @@ export function registerDownloadCommand(program: Command): void {
       }
       const prefix: string | undefined = options.month || options.year || undefined;
 
-      const { present, items: planned } = planImageDownloads(prefix, { withMp4: Boolean(options.mp4) });
+      const { present, items: planned } = planImageDownloads(prefix, {
+        withMp4: Boolean(options.mp4),
+        cleanStale: !options.dryRun,
+      });
       const items = max ? planned.slice(0, max) : planned;
       const n = (v: number) => v.toLocaleString('en-US');
 
@@ -70,12 +73,19 @@ export function registerDownloadCommand(program: Command): void {
       let aborted = false;
       let finished = 0;
       let noted = 0;
+      let lateSkipped = 0;
 
-      // Failures are written the moment they happen, not at the end: a run can
-      // last hours, and the reasons should be readable while it goes, and survive
-      // it being stopped.
+      // Notes are written the moment they happen, not at the end: a run can last
+      // hours, and the reasons should be readable while it goes, and survive it
+      // being stopped. The file is only ever appended to, one section per run, so a
+      // second run (a targeted slice beside the long batch) never wipes what the
+      // other has recorded. Lines starting with # are the section headers.
       const failuresFile = path.join(getCacheDir(), 'download-report.tsv');
-      fs.writeFileSync(failuresFile, '', 'utf-8');
+      fs.appendFileSync(
+        failuresFile,
+        `# ${new Date().toISOString()} download ${process.argv.slice(3).join(' ')} (pid ${process.pid})\n`,
+        'utf-8',
+      );
       const record = (id: string, reason: string) => {
         noted += 1;
         fs.appendFileSync(failuresFile, `${id}\t${reason}\n`, 'utf-8');
@@ -130,6 +140,16 @@ export function registerDownloadCommand(program: Command): void {
       };
 
       const handle = async (item: (typeof items)[number]) => {
+        // Another run may have fetched it since the plan was made (the long batch
+        // and a targeted slice overlap): look again just before asking Gyazo.
+        if (item.needBody && item.type && fs.existsSync(path.join(item.dir, `${item.id}.${item.type}`))) {
+          lateSkipped += 1;
+          item = { ...item, needBody: false };
+        }
+        if (item.needMp4 && fs.existsSync(path.join(item.dir, `${item.id}.mp4`))) {
+          lateSkipped += 1;
+          item = { ...item, needMp4: false };
+        }
         if (item.needBody) {
           await fetchOne(item.id, '', {
             candidates: imageBodyCandidates(item.id, item.type, item.url),
@@ -171,10 +191,9 @@ export function registerDownloadCommand(program: Command): void {
       await Promise.all(Array.from({ length: Math.min(jobs, Math.max(items.length, 1)) }, worker));
       if (finished >= PROGRESS_EVERY) process.stderr.write('\n');
 
-      if (noted === 0) fs.rmSync(failuresFile, { force: true });
 
       console.log(
-        `Downloaded ${n(downloaded)} (${formatBytes(bytes)}), ${n(present)} already present, ` +
+        `Downloaded ${n(downloaded)} (${formatBytes(bytes)}), ${n(present + lateSkipped)} already present, ` +
           `${n(gone)} gone, ${n(failed)} failed.` +
           (differs > 0 ? ` ${n(differs)} differ from the recorded file_size (kept).` : ''),
       );

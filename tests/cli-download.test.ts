@@ -37,7 +37,7 @@ interface Route {
  * the session cookie (503 without), serves public images at /<id>.<ext> and
  * private ones under /s/, and redirects /<id>/raw to wherever the body lives.
  */
-function imageStub(routes: Record<string, Route>) {
+function imageStub(routes: Record<string, Route>, options: { delayMs?: number } = {}) {
   const hits: string[] = [];
   const attempts: Record<string, number> = {};
   const stub = startStubServer((req, res) => {
@@ -68,8 +68,8 @@ function imageStub(routes: Record<string, Route>) {
       const body = r.body ?? bodyOf(id);
       const headers: Record<string, string> = { 'content-type': r.contentType || `image/${ext}` };
       if (!r.chunked) headers['content-length'] = String(body.length);
-      res.writeHead(200, headers);
-      res.end(body);
+      const send = () => { res.writeHead(200, headers); res.end(body); };
+      if (options.delayMs) setTimeout(send, options.delayMs); else send();
       return;
     }
     m = /^\/([0-9a-f]{32})\/raw$/.exec(url.pathname);
@@ -316,6 +316,85 @@ test('a body that 5xxs for a capture that still exists stays a failure', async (
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(/1 failed/);
     expect(result.stdout).toMatch(/0 gone/);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('two downloads of the same cache at once both succeed and leave only whole files', async () => {
+  // The slow batch and a targeted run can overlap on the same images. They must
+  // not trip over one another's temporary file.
+  const cacheDir = createTempCacheDir();
+  const ids = Array.from({ length: 40 }, (_, i) => idOf(0x2000 + i));
+  const routes: Record<string, Route> = {};
+  for (const id of ids) {
+    writeImageCache(cacheDir, id, record(id, { file_size: 400 }));
+    routes[id] = { public: true, ext: 'jpg', body: bodyOf(id, 400) };
+  }
+  const { stub: pending } = imageStub(routes, { delayMs: 25 });
+  const stub = await pending;
+  try {
+    const opts = {
+      webOrigin: stub.origin,
+      cookieFile: cookieFile(cacheDir),
+      env: { GYAZO_IMAGE_ORIGIN: stub.origin, ...FAST_RETRY },
+    };
+    const [a, b] = await Promise.all([
+      runCli(cacheDir, ['download', '--jobs', '8'], opts),
+      runCli(cacheDir, ['download', '--jobs', '8'], opts),
+    ]);
+    expect(a.status).toBe(0);
+    expect(b.status).toBe(0);
+    for (const id of ids) expect(fs.readFileSync(imagePath(cacheDir, id, 'jpg'))).toEqual(bodyOf(id, 400));
+    const leftovers = fs.readdirSync(path.join(cacheDir, 'images', '0', '0')).filter((n) => n.endsWith('.part'));
+    expect(leftovers).toEqual([]);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('the report is appended to across runs, never wiped by a later one', async () => {
+  const cacheDir = createTempCacheDir();
+  const gone = idOf(0xaa1);
+  const fine = idOf(0xbb2);
+  writeImageCache(cacheDir, gone, record(gone, { created_at: '2020-07-01T00:00:00.000Z' }));
+  writeImageCache(cacheDir, fine, record(fine, { created_at: '2024-01-01T00:00:00.000Z' }));
+  const { stub: pending } = imageStub({ [fine]: { public: true, ext: 'jpg' } }); // `gone` is unknown to it
+  const stub = await pending;
+  try {
+    const first = await run(cacheDir, stub, ['--year', '2020']);
+    expect(first.stdout).toMatch(/1 gone/);
+    const second = await run(cacheDir, stub, ['--year', '2024']);
+    expect(second.status).toBe(0);
+    expect(fs.readFileSync(path.join(cacheDir, 'download-report.tsv'), 'utf8')).toContain(gone);
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a stale .part from a killed run is cleaned up, a fresh one is left alone', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  const stale = idOf(0xcc3);
+  const live = idOf(0xdd4);
+  writeImageCache(cacheDir, a, record(a));
+  writeImageCache(cacheDir, stale, record(stale, { file_size: 100 }));
+  writeImageCache(cacheDir, live, record(live, { file_size: 100 }));
+  const dirOf = (id: string) => path.join(cacheDir, 'images', id[0], id[1]);
+  const stalePart = path.join(dirOf(stale), `${stale}.jpg.999.old.part`);
+  const livePart = path.join(dirOf(live), `${live}.jpg.998.new.part`);
+  fs.writeFileSync(stalePart, 'x');
+  fs.writeFileSync(livePart, 'x');
+  const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000);
+  fs.utimesSync(stalePart, twoHoursAgo, twoHoursAgo);
+  // (these two have no route, so they 404 and stay "gone": only the cleanup matters here)
+  const { stub: pending } = imageStub({ [a]: { public: true, ext: 'jpg' } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(stalePart)).toBe(false);
+    expect(fs.existsSync(livePart)).toBe(true); // might belong to a run that is still going
   } finally {
     await stub.close();
   }

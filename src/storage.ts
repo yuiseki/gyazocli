@@ -168,7 +168,7 @@ export interface DownloadItem {
  */
 export function planImageDownloads(
   prefix?: string,
-  options: { withMp4?: boolean } = {},
+  options: { withMp4?: boolean; cleanStale?: boolean } = {},
 ): { present: number; items: DownloadItem[] } {
   const root = path.join(getCacheDir(), 'images');
   const items: DownloadItem[] = [];
@@ -193,7 +193,18 @@ export function planImageDownloads(
       const rest = m[2];
       if (rest === 'json') jsonIds.push(m[1]);
       else if (rest === 'mp4') withMp4File.add(m[1]);
-      else if (!rest.endsWith('.part') && !/^(m|s)\./.test(rest)) withBody.add(m[1]);
+      else if (rest.endsWith('.part')) {
+        // A temp file from a download that was killed. One that has been still for
+        // an hour is nobody's; a younger one may belong to a run that is going.
+        if (options.cleanStale) {
+          const full = path.join(dir, entry.name);
+          try {
+            if (Date.now() - fs.statSync(full).mtimeMs > 3600_000) fs.unlinkSync(full);
+          } catch {
+            // already gone, or not ours to remove
+          }
+        }
+      } else if (!/^(m|s)\./.test(rest)) withBody.add(m[1]);
     }
     for (const id of jsonIds.sort()) {
       const haveBody = withBody.has(id);

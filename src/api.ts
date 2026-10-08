@@ -427,7 +427,12 @@ export async function downloadImageBody(options: {
         }
         const ext = options.ext || CONTENT_TYPE_EXTENSIONS[contentType] || 'bin';
         const finalPath = `${destBase}.${ext}`;
-        const partPath = `${finalPath}.part`;
+        // Unique to this attempt: another process (the slow batch and a targeted run
+        // can overlap) may be fetching the same image, and two of them sharing one
+        // temp name would truncate each other and fail the rename. Each writes its
+        // own and renames it over the final path, so whichever lands last wins with
+        // identical bytes.
+        const partPath = `${finalPath}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.part`;
 
         // A stalled body would otherwise hang a worker forever: the request
         // timeout only covers the headers.
