@@ -55,11 +55,16 @@ export function registerDownloadCommand(program: Command): void {
       const n = (v: number) => v.toLocaleString('en-US');
 
       if (options.dryRun) {
-        const known = items.reduce((sum, item) => sum + (item.fileSize || 0), 0);
-        const unknown = items.filter((item) => item.fileSize === null).length;
+        // A record's file_size is the size of its image/gif body, so it only counts
+        // for the items that still need that body. An mp4 has no recorded size.
+        const bodies = items.filter((item) => item.needBody);
+        const known = bodies.reduce((sum, item) => sum + (item.fileSize || 0), 0);
+        const unknown = bodies.filter((item) => item.fileSize === null).length;
+        const mp4s = items.filter((item) => item.needMp4).length;
         console.log(
           `Dry run: ${n(items.length)} to download, ${n(present)} already present. ` +
-            `Expected ${n(known)} bytes (${formatBytes(known)}), ${n(unknown)} of unknown size.`,
+            `Expected ${n(known)} bytes (${formatBytes(known)}), ${n(unknown)} of unknown size.` +
+            (mp4s > 0 ? ` Plus ${n(mp4s)} mp4 file(s) of unknown size.` : ''),
         );
         return;
       }

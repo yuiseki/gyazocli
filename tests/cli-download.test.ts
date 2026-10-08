@@ -537,6 +537,25 @@ test('--dry-run reports what would be fetched and fetches nothing', async () => 
   }
 });
 
+test('--dry-run with --mp4 counts the mp4 files apart and does not pass off a gif size as theirs', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a, { type: 'gif', file_size: 1000, has_mp4: true }));
+  fs.writeFileSync(imagePath(cacheDir, a, 'gif'), Buffer.alloc(1000, 1)); // the gif is already here
+  const { stub: pending, hits } = imageStub({ [a]: { public: true, ext: 'gif', mp4: Buffer.alloc(50, 2) } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub, ['--mp4', '--dry-run']);
+    expect(result.status).toBe(0);
+    expect(hits).toHaveLength(0);
+    expect(result.stdout).toMatch(/1 to download/);
+    expect(result.stdout).toMatch(/Expected 0 bytes/); // the 1,000 is the gif's size, not the mp4's
+    expect(result.stdout).toMatch(/1 mp4 file\(s\) of unknown size/);
+  } finally {
+    await stub.close();
+  }
+});
+
 test('download without cookies refuses and sends nothing', async () => {
   const cacheDir = createTempCacheDir();
   const a = idOf(0xaa1);
