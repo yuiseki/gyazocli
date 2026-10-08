@@ -489,6 +489,30 @@ export async function downloadImageBody(options: {
   return { kind: 'gone' };
 }
 
+/**
+ * Whether a capture's metadata is gone (gyazo.com/<id>.json answers 404).
+ *
+ * Gyazo answers 503, not 404, for the body of a capture that has been deleted, so
+ * a body that will not come after its retries is either a real outage or a
+ * deleted capture, and the metadata tells them apart: a deleted capture's 404s
+ * too, an outage leaves it answering. Anything but a clear 404 (a 5xx, a network
+ * error) counts as "not known to be deleted", so an outage is never filed away as
+ * a deletion.
+ */
+export async function captureMetadataMissing(imageId: string, cookieHeader: string): Promise<boolean> {
+  try {
+    const response = await axios.get(webImageJsonUrl(imageId), {
+      headers: { Cookie: cookieHeader, 'X-Requested-With': 'XMLHttpRequest' },
+      timeout: REQUEST_TIMEOUT_MS,
+      validateStatus: () => true,
+      maxRedirects: 0,
+    });
+    return response.status === 404;
+  } catch {
+    return false;
+  }
+}
+
 export type RenditionFormat = 'webp' | 'jpeg';
 
 export interface ImageRendition {

@@ -28,6 +28,8 @@ interface Route {
   contentType?: string;
   /** Serve this video on `/<id>.mp4`. */
   mp4?: Buffer;
+  /** The capture still exists: its metadata (`/<id>.json`) answers 200, not 404. */
+  meta?: boolean;
 }
 
 /**
@@ -48,6 +50,12 @@ function imageStub(routes: Record<string, Route>) {
     if (m) {
       const [, priv, id, ext] = m;
       const r = routes[id];
+      if (ext === 'json') {
+        if (!r || !r.meta) { res.writeHead(404); res.end('{}'); return; }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{}');
+        return;
+      }
       if (ext === 'mp4') {
         if (!r || !r.mp4) { res.writeHead(404); res.end('nope'); return; }
         res.writeHead(200, { 'content-type': 'video/mp4', 'content-length': String(r.mp4.length) });
@@ -279,6 +287,40 @@ test('a gif that also has an mp4 gets the mp4 only with --mp4', async () => {
   }
 });
 
+test('a body that 5xxs for a deleted capture (its metadata 404s) is gone, not a failure', async () => {
+  // Gyazo answers 503, not 404, for the body of a capture that has been deleted.
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a));
+  const { stub: pending } = imageStub({ [a]: { public: true, ext: 'jpg', status: 500 } }); // no meta: deleted
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/1 gone/);
+    expect(result.stdout).toMatch(/0 failed/);
+    expect(fs.readFileSync(path.join(cacheDir, 'download-report.tsv'), 'utf8')).toMatch(new RegExp(`${a}\\tgone \\(deleted`));
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a body that 5xxs for a capture that still exists stays a failure', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a));
+  const { stub: pending } = imageStub({ [a]: { public: true, ext: 'jpg', status: 500, meta: true } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toMatch(/1 failed/);
+    expect(result.stdout).toMatch(/0 gone/);
+  } finally {
+    await stub.close();
+  }
+});
+
 test('a transient 503 is retried and then succeeds', async () => {
   const cacheDir = createTempCacheDir();
   const a = idOf(0xaa1);
@@ -386,7 +428,7 @@ test('a run of consecutive failures stops early instead of hammering', async () 
   const routes: Record<string, Route> = {};
   for (const id of ids) {
     writeImageCache(cacheDir, id, record(id));
-    routes[id] = { public: true, ext: 'jpg', status: 500 }; // always 500
+    routes[id] = { public: true, ext: 'jpg', status: 500, meta: true }; // always 500, but the capture exists: an outage
   }
   const { stub: pending, hits } = imageStub(routes);
   const stub = await pending;

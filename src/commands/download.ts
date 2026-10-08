@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Command } from 'commander';
-import { downloadImageBody, imageBodyCandidates, imageMp4Candidates } from '../api';
+import { captureMetadataMissing, downloadImageBody, imageBodyCandidates, imageMp4Candidates } from '../api';
 import { loadCookieHeader } from '../cookies';
 import { formatBytes } from '../format';
 import { parsePositiveIntegerOption } from '../options';
@@ -113,9 +113,18 @@ export function registerDownloadCommand(program: Command): void {
           record(id, `size mismatch: got ${result.got}, expected ${result.expected}`);
           return 'failed';
         } catch (error: any) {
+          const reason = (error?.message || 'error').replace(/\s+/g, ' ');
+          // A body that 5xxs through every retry is either an outage or a deleted
+          // capture (Gyazo answers 503 for those, not 404). Its metadata says
+          // which: still there means a real failure, a 404 means deleted.
+          if (/HTTP 5\d\d/.test(reason) && (await captureMetadataMissing(id, cookieHeader))) {
+            gone += 1;
+            record(id, `gone${label} (deleted: its metadata 404s too)`);
+            return 'gone';
+          }
           failed += 1;
           consecutive += 1;
-          record(id, (error?.message || 'error').replace(/\s+/g, ' '));
+          record(id, reason);
           return 'failed';
         }
       };
