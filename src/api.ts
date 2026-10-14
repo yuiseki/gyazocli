@@ -494,17 +494,21 @@ export async function downloadImageBody(options: {
   return { kind: 'gone' };
 }
 
+export type CaptureState = 'deleted' | 'suspended' | 'present' | 'unknown';
+
 /**
- * Whether a capture's metadata is gone (gyazo.com/<id>.json answers 404).
+ * What a capture's web metadata (gyazo.com/<id>.json) says about whether it can be
+ * had at all, for telling a capture that is lost from a problem with the request.
  *
- * Gyazo answers 503, not 404, for the body of a capture that has been deleted, so
- * a body that will not come after its retries is either a real outage or a
- * deleted capture, and the metadata tells them apart: a deleted capture's 404s
- * too, an outage leaves it answering. Anything but a clear 404 (a 5xx, a network
- * error) counts as "not known to be deleted", so an outage is never filed away as
- * a deletion.
+ * Gyazo answers 503, not 404, for the body of a deleted capture, and 403 for the
+ * body of one it has suspended (the metadata then answers 403 "suspended"). A body
+ * that will not come is therefore an outage or a bad cookie, or one of those, and
+ * the metadata tells them apart: 404 is deleted, a 403 that says suspended is
+ * suspended, and a metadata that still answers 200 means the capture is fine and the
+ * trouble is elsewhere. Anything unclear (a 5xx, a network error, a bare 403) is
+ * "unknown", so an outage or an expired cookie is never filed away as a loss.
  */
-export async function captureMetadataMissing(imageId: string, cookieHeader: string): Promise<boolean> {
+export async function captureMetadataState(imageId: string, cookieHeader: string): Promise<CaptureState> {
   try {
     const response = await axios.get(webImageJsonUrl(imageId), {
       headers: { Cookie: cookieHeader, 'X-Requested-With': 'XMLHttpRequest' },
@@ -512,9 +516,12 @@ export async function captureMetadataMissing(imageId: string, cookieHeader: stri
       validateStatus: () => true,
       maxRedirects: 0,
     });
-    return response.status === 404;
+    if (response.status === 404) return 'deleted';
+    if (response.status === 403 && /suspended/i.test(JSON.stringify(response.data ?? ''))) return 'suspended';
+    if (response.status === 200) return 'present';
+    return 'unknown';
   } catch {
-    return false;
+    return 'unknown';
   }
 }
 

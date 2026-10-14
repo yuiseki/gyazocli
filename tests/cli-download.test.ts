@@ -30,6 +30,8 @@ interface Route {
   mp4?: Buffer;
   /** The capture still exists: its metadata (`/<id>.json`) answers 200, not 404. */
   meta?: boolean;
+  /** Gyazo has suspended it: the metadata answers 403 "suspended". */
+  suspended?: boolean;
 }
 
 /**
@@ -51,6 +53,11 @@ function imageStub(routes: Record<string, Route>, options: { delayMs?: number } 
       const [, priv, id, ext] = m;
       const r = routes[id];
       if (ext === 'json') {
+        if (r?.suspended) {
+          res.writeHead(403, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ errors: ['Image or Owner account is suspended'] }));
+          return;
+        }
         if (!r || !r.meta) { res.writeHead(404); res.end('{}'); return; }
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end('{}');
@@ -451,6 +458,41 @@ test('a stale .part from a killed run is cleaned up, a fresh one is left alone',
     expect(result.status).toBe(0);
     expect(fs.existsSync(stalePart)).toBe(false);
     expect(fs.existsSync(livePart)).toBe(true); // might belong to a run that is still going
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a body that 403s for a capture Gyazo has suspended is gone, not a failure', async () => {
+  // A suspended capture's body and web metadata both answer 403, and nothing a
+  // retry or a better cookie does will change that.
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a));
+  const { stub: pending } = imageStub({ [a]: { public: true, ext: 'jpg', status: 403, suspended: true } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/1 gone/);
+    expect(result.stdout).toMatch(/0 failed/);
+    expect(fs.readFileSync(path.join(cacheDir, 'download-report.tsv'), 'utf8')).toMatch(new RegExp(`${a}\\tgone \\(suspended`));
+  } finally {
+    await stub.close();
+  }
+});
+
+test('a 403 body for a capture whose metadata is fine stays a failure (it may be the cookie)', async () => {
+  const cacheDir = createTempCacheDir();
+  const a = idOf(0xaa1);
+  writeImageCache(cacheDir, a, record(a));
+  const { stub: pending } = imageStub({ [a]: { public: true, ext: 'jpg', status: 403, meta: true } });
+  const stub = await pending;
+  try {
+    const result = await run(cacheDir, stub);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toMatch(/1 failed/);
+    expect(result.stdout).toMatch(/0 gone/);
   } finally {
     await stub.close();
   }

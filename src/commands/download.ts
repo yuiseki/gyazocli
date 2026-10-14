@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Command } from 'commander';
-import { captureMetadataMissing, downloadImageBody, imageBodyCandidates, imageMp4Candidates } from '../api';
+import { captureMetadataState, downloadImageBody, imageBodyCandidates, imageMp4Candidates } from '../api';
 import { loadCookieHeader } from '../cookies';
 import { formatBytes } from '../format';
 import { parsePositiveIntegerOption } from '../options';
@@ -129,11 +129,14 @@ export function registerDownloadCommand(program: Command): void {
           return { outcome: 'failed' };
         } catch (error: any) {
           const reason = (error?.message || 'error').replace(/\s+/g, ' ');
-          // A body that 5xxs through every retry is either an outage or a deleted
-          // capture (Gyazo answers 503 for those, not 404). Its metadata says
-          // which: still there means a real failure, a 404 means deleted.
-          if (/HTTP 5\d\d/.test(reason) && (await captureMetadataMissing(id, cookieHeader))) {
-            return { outcome: 'gone', goneNote: 'deleted: its metadata 404s too' };
+          // A body that 5xxs through every retry (a deleted capture) or is refused
+          // with a 403 (a suspended one) is lost, not a failure of this run, but only
+          // if the metadata says so; a metadata that is fine, or unclear, means a real
+          // failure (an outage, an expired cookie).
+          if (/HTTP (5\d\d|403)/.test(reason)) {
+            const state = await captureMetadataState(id, cookieHeader);
+            if (state === 'deleted') return { outcome: 'gone', goneNote: 'deleted: its metadata 404s too' };
+            if (state === 'suspended') return { outcome: 'gone', goneNote: 'suspended: Gyazo answers 403 suspended' };
           }
           failed += 1;
           consecutive += 1;
